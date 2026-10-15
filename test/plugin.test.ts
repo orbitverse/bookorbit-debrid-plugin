@@ -605,7 +605,7 @@ test("automatic connection test accepts audio-only indexers without searching a 
   assert.equal(result.success, true);
   assert.match(
     result.indexerName!,
-    /configuration and TorBox cache access verified/,
+    /configuration and TorBox account access verified/,
   );
   assert.equal(f.discovered.length, 2);
   assert(f.discovered.some((u) => u.pathname.endsWith("/api/v1/indexer")));
@@ -620,4 +620,146 @@ test("automatic connection test rejects servers without either book category", a
   assert("error" in result);
   assert.match(result.error, /No enabled public ebook or audiobook/);
   assert.equal(f.discovered.length, 2);
+});
+
+const easyCfg: PluginIndexerConfig = {
+  ...cfg,
+  credential: JSON.stringify({
+    indexerKey: "SYNTHETIC_INDEXER_KEY",
+    debrid: { provider: "easydebrid", key: providerKey },
+  }),
+};
+function easyPluginFixture(
+  options: { evicted?: boolean; changed?: boolean; audioTracks?: boolean } = {},
+) {
+  const f = fixture();
+  const fetch = f.host.fetch;
+  const calls: string[] = [];
+  let lookups = 0;
+  f.host.fetch = async (input, init) => {
+    const url = new URL(input);
+    calls.push(url.pathname);
+    if (url.hostname !== "easydebrid.com") return fetch(input, init);
+    assert.equal(init?.headers?.Authorization, `Bearer ${providerKey}`);
+    assert.equal(init?.redirect, "manual");
+    if (url.pathname.endsWith("lookupdetails")) {
+      lookups++;
+      assert.deepEqual(JSON.parse(init!.body!), {
+        urls: [`magnet:?xt=urn:btih:${hash}`],
+      });
+      return Response.json({
+        result: [
+          {
+            cached: !(options.evicted && lookups > 1),
+            files: (options.audioTracks ? tracks : [ebook]).map((file) => ({
+              name: file.name.split("/").pop(),
+              folder: file.name.includes("/") ? "The Little Prince" : "",
+              size: file.size + (options.changed && lookups > 1 ? 1 : 0),
+            })),
+          },
+        ],
+      });
+    }
+    assert.equal(url.pathname, "/api/v1/link/generate");
+    assert.deepEqual(JSON.parse(init!.body!), {
+      url: `magnet:?xt=urn:btih:${hash}`,
+    });
+    return Response.json({
+      files: [
+        {
+          filename: ebook.name,
+          directory: [],
+          size: ebook.size,
+          url: "https://cdn.example/book.epub?ticket=opaque",
+        },
+      ],
+    });
+  };
+  return { ...f, calls };
+}
+
+test("EasyDebrid plugin search is read-only and resolution rechecks before generating a link", async () => {
+  const f = easyPluginFixture();
+  const [release] = await plugin.search(
+    q,
+    easyCfg,
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(JSON.parse(release.guid).provider, "easydebrid");
+  assert.match(release.title, /EasyDebrid/);
+  assert(!release.guid.includes(providerKey));
+  assert.deepEqual(f.calls, ["/1/api", "/api/v1/link/lookupdetails"]);
+  const file = await plugin.resolveFile!(
+    release,
+    easyCfg,
+    f.host,
+    new AbortController().signal,
+  );
+  assert.deepEqual(file, {
+    url: "https://cdn.example/book.epub?ticket=opaque",
+    fileName: ebook.name,
+    sizeBytes: ebook.size,
+    format: "epub",
+  });
+  assert.deepEqual(f.calls.slice(2), [
+    "/api/v1/link/lookupdetails",
+    "/api/v1/link/generate",
+  ]);
+});
+
+test("changing a release's configured provider rejects resolution before networking", async () => {
+  const f = easyPluginFixture();
+  const [release] = await plugin.search(
+    q,
+    easyCfg,
+    f.host,
+    new AbortController().signal,
+  );
+  const before = f.calls.length;
+  await assert.rejects(
+    plugin.resolveFile!(release, cfg, f.host, new AbortController().signal),
+    /provider changed/,
+  );
+  assert.equal(f.calls.length, before);
+});
+
+test("EasyDebrid eviction or changed manifest prevents link generation through the plugin", async () => {
+  for (const options of [{ evicted: true }, { changed: true }]) {
+    const f = easyPluginFixture(options);
+    const [release] = await plugin.search(
+      q,
+      easyCfg,
+      f.host,
+      new AbortController().signal,
+    );
+    await assert.rejects(
+      plugin.resolveFile!(
+        release,
+        easyCfg,
+        f.host,
+        new AbortController().signal,
+      ),
+      /no download was queued/,
+    );
+    assert.equal(
+      f.calls.filter((path) => path.endsWith("lookupdetails")).length,
+      2,
+    );
+    assert(!f.calls.some((path) => path.endsWith("generate")));
+  }
+});
+
+test("EasyDebrid plugin omits tracksets that it cannot deliver as a complete ZIP", async () => {
+  const f = easyPluginFixture({ audioTracks: true });
+  assert.deepEqual(
+    await plugin.search(
+      { ...q, mediaKind: "audiobook" },
+      easyCfg,
+      f.host,
+      new AbortController().signal,
+    ),
+    [],
+  );
+  assert(!f.calls.some((path) => path.endsWith("generate")));
 });

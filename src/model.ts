@@ -28,8 +28,10 @@ export const Size = Schema.Int.check(
 );
 export const File = Schema.Struct({ name: Schema.NonEmptyString, size: Size });
 export type File = typeof File.Type;
+export const Provider = Schema.Literals(["torbox", "easydebrid"]);
+export type Provider = typeof Provider.Type;
 export const Selection = Schema.Struct({
-  provider: Schema.Literal("torbox"),
+  provider: Provider,
   hash: Hash,
   title: Schema.NonEmptyString,
   media: Schema.Literals(["ebook", "audiobook"]),
@@ -37,11 +39,19 @@ export const Selection = Schema.Struct({
   format: Schema.NonEmptyString,
 });
 export type Selection = typeof Selection.Type;
+export const Preparation = Schema.Struct({
+  action: Schema.Literal("prepare"),
+  provider: Schema.Literal("torbox"),
+  hash: Hash,
+  title: Schema.NonEmptyString,
+  media: Schema.Literals(["ebook", "audiobook"]),
+});
+export const Release = Schema.Union([Selection, Preparation]);
 
 const Account = Schema.Struct({
   indexerKey: Schema.NonEmptyString,
   debrid: Schema.Struct({
-    provider: Schema.Literal("torbox"),
+    provider: Provider,
     key: Schema.NonEmptyString,
   }),
 });
@@ -54,7 +64,7 @@ export const config = (cfg: PluginIndexerConfig) => {
     if (!account.indexerKey.trim() || !account.debrid.key.trim()) throw Error();
   } catch {
     throw fail(
-      'Paste account JSON with indexerKey and debrid: { provider: "torbox", key: "..." } into API key.',
+      'Paste account JSON with indexerKey and debrid: { provider: "torbox" or "easydebrid", key: "..." } into API key.',
       "unauthorized",
     );
   }
@@ -103,5 +113,8 @@ export const config = (cfg: PluginIndexerConfig) => {
       );
     return url.href;
   });
-  return { account, endpoints, baseUrl: base.href };
+  const prepareUncached = cfg.settings?.prepareUncached ?? false;
+  if (typeof prepareUncached !== "boolean")
+    throw fail("Show uncached torrents must be enabled or disabled.");
+  return { account, endpoints, baseUrl: base.href, prepareUncached };
 };

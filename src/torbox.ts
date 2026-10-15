@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
+import * as Semaphore from "effect/Semaphore";
+import * as Option from "effect/Option";
 import { File, Hash, Size, fail, type Selection } from "./model.js";
 import { decode, json, request, Network } from "./http.js";
 
@@ -102,18 +104,15 @@ export const cached = Effect.fnUntraced(function* (
   return available;
 });
 
-export const resolve = Effect.fnUntraced(function* (
-  selection: Selection & { files: readonly File[] },
+const create = Effect.fnUntraced(function* (
+  hash: string,
   key: string,
+  cachedOnly: boolean,
 ) {
-  const same = (files: readonly File[]) =>
-    selection.files.every((f) =>
-      files.some((c) => c.name === f.name && c.size === f.size),
-    );
   const boundary = `bookorbit-${crypto.randomUUID()}`;
   const fields = {
-    magnet: `magnet:?xt=urn:btih:${selection.hash}`,
-    add_only_if_cached: "true",
+    magnet: `magnet:?xt=urn:btih:${hash}`,
+    add_only_if_cached: String(cachedOnly),
     seed: "3",
     allow_zip: "true",
   };
@@ -144,17 +143,138 @@ export const resolve = Effect.fnUntraced(function* (
     ),
     "TorBox add",
   );
-  if (created.hash !== selection.hash)
+  if (created.hash !== hash)
     return yield* Effect.fail(
       fail("TorBox returned a different torrent. Search again."),
     );
-  const result = yield* decode(
-    Schema.Union([ReadyTorrent, Schema.Array(ReadyTorrent)]),
-    yield* call(`mylist?id=${created.torrent_id}&bypass_cache=true`, key),
-    "TorBox files",
+  return created;
+});
+
+const AccountTorrent = Schema.Struct({
+  id: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  hash: Hash,
+  name: Schema.String,
+  download_state: Schema.String,
+  download_finished: Schema.Boolean,
+  download_present: Schema.Boolean,
+  files: Schema.optionalKey(Schema.NullOr(Schema.Array(ReadyFile))),
+});
+const account = Effect.fnUntraced(function* (key: string) {
+  return yield* decode(
+    Schema.Array(AccountTorrent).check(Schema.isMaxLength(1000)),
+    yield* call("mylist?bypass_cache=true&limit=1000", key),
+    "TorBox account",
   );
-  const torrents = "files" in result ? [result] : result;
-  const torrent = torrents.find((t) => t.id === created.torrent_id);
+});
+// TorBox documents qBittorrent states; neither completed nor cached proves file readiness.
+// https://github.com/TorBox-App/torbox-sdk-js/blob/main/documentation/services/TorrentsService.md
+const terminal = (torrent: typeof AccountTorrent.Type) =>
+  ["error", "missingFiles"].includes(torrent.download_state) ||
+  torrent.files?.some((f) => f.infected) === true;
+const ready = (torrent: typeof AccountTorrent.Type) =>
+  !terminal(torrent) &&
+  torrent.download_finished &&
+  torrent.download_present &&
+  !!torrent.files?.length;
+
+export const available = Effect.fnUntraced(function* (
+  hashes: readonly string[],
+  key: string,
+) {
+  const hits = yield* cached(hashes, key);
+  const missing = new Set(
+    hashes.filter((hash) => !hits.some((hit) => hit.hash === hash)),
+  );
+  if (!missing.size) return hits;
+  const torrents = yield* account(key);
+  for (const torrent of torrents) {
+    if (!missing.has(torrent.hash) || !ready(torrent)) continue;
+    hits.push({
+      hash: torrent.hash,
+      name: torrent.name || torrent.hash,
+      files: torrent.files!,
+    });
+    missing.delete(torrent.hash);
+  }
+  return hits;
+});
+
+// Only one preparation runs per loaded module; other workers still reconcile through TorBox.
+const preparation = Semaphore.makeUnsafe(1);
+export const prepare = Effect.fnUntraced(function* (hash: string, key: string) {
+  yield* decode(Hash, hash, "TorBox preparation");
+  const result = yield* preparation.withPermitsIfAvailable(1)(
+    Effect.gen(function* () {
+      const torrents = yield* account(key);
+      const matches = torrents.filter((torrent) => torrent.hash === hash);
+      if (matches.some(ready)) return { status: "ready" as const };
+      if (matches.some(terminal))
+        return yield* Effect.fail(
+          fail(
+            "This TorBox torrent failed or has unsafe files. Check it in TorBox; it was not restarted.",
+          ),
+        );
+      if (matches.length) return { status: "preparing" as const };
+      if (torrents.length === 1000)
+        return yield* Effect.fail(
+          fail(
+            "Your TorBox account has too many entries to safely check for an existing preparation. Check it in TorBox first.",
+          ),
+        );
+      yield* create(hash, key, false).pipe(
+        Effect.catch((error) =>
+          error.kind === "unreachable" || error.kind === "timeout"
+            ? Effect.fail(
+                fail(
+                  "The TorBox preparation outcome is uncertain. Check your TorBox account before trying again; a job may already exist.",
+                ),
+              )
+            : Effect.fail(error),
+        ),
+      );
+      return { status: "preparing" as const };
+    }),
+  );
+  if (Option.isNone(result))
+    return yield* Effect.fail(
+      fail("Another TorBox preparation is in progress. Search again shortly."),
+    );
+  return result.value;
+});
+
+export const resolve = Effect.fnUntraced(function* (
+  selection: Selection & { files: readonly File[]; reuseAccount?: boolean },
+  key: string,
+) {
+  const same = (files: readonly File[]) =>
+    selection.files.every((f) =>
+      files.some((c) => c.name === f.name && c.size === f.size),
+    );
+  let torrent: typeof ReadyTorrent.Type | undefined;
+  if (selection.reuseAccount) {
+    const matches = (yield* account(key)).filter(
+      (item) => item.hash === selection.hash,
+    );
+    const existing = matches.find(ready);
+    if (existing)
+      torrent = yield* decode(ReadyTorrent, existing, "TorBox files");
+    else if (matches.length)
+      return yield* Effect.fail(
+        fail(
+          "TorBox has not made this preparation available. Check it in TorBox and search again later.",
+        ),
+      );
+  }
+  if (!torrent) {
+    const created = yield* create(selection.hash, key, true);
+    const result = yield* decode(
+      Schema.Union([ReadyTorrent, Schema.Array(ReadyTorrent)]),
+      yield* call(`mylist?id=${created.torrent_id}&bypass_cache=true`, key),
+      "TorBox files",
+    );
+    const torrents = "files" in result ? [result] : result;
+    torrent = torrents.find((t) => t.id === created.torrent_id);
+  }
   if (
     !torrent ||
     torrent.hash !== selection.hash ||

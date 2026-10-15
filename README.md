@@ -3,7 +3,7 @@
 Find cached ebooks and audiobooks through your indexers and debrid account.
 BookOrbit downloads the files directly; you do not need a local torrent client.
 
-**Early preview:** TorBox is the first supported provider.
+**Early preview:** Supports TorBox and EasyDebrid (experimental).
 
 ## Setup
 
@@ -25,13 +25,22 @@ BookOrbit downloads the files directly; you do not need a local torrent client.
 BookOrbit stores these credentials encrypted. Your server needs
 `BOOK_REQUEST_ENCRYPTION_KEY` configured.
 
+Set `provider` to `torbox` for a TorBox API key, or `easydebrid` for an
+EasyDebrid OAuth access token. EasyDebrid supports ebooks and single-file
+audiobooks; complete multi-track ZIP downloads currently require TorBox.
+
 TorBox download links also contain your API key. BookOrbit keeps the link on
 your server while downloading; database backups may retain it. Keep those
 links and backups private.
 
-Searches show cached files only. Selecting a result rechecks its availability;
-if it has left the cache, search again. Uncached torrents are never queued.
-Your provider's account limits still apply.
+Searches show ready files by default. Selecting a result rechecks its availability.
+
+With TorBox, you can enable **Show uncached torrents**. Results marked **Prepare**
+need an availability check and may need fetching first. Clicking **View files** or **Download release** may start
+preparation in your account; automatic grabs can also start it. One preparation candidate is offered only when no ready books were found. Search again later and select a ready file to download;
+BookOrbit will not finish the request automatically. Your provider's account limits
+still apply. Files are checked before delivery, so a preparation result may turn out
+not to contain a supported book.
 
 Ebooks retain their separate formats. Audiobooks can be a single audio file or
 a numbered track set in one matching folder, delivered together as ZIP.

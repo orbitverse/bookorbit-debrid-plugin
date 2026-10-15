@@ -53,6 +53,13 @@ export default {
     "Your Prowlarr or Jackett server address. For a local server, enable Allow private addresses. Paste the account JSON from the README into API key.",
   settingsFields: [
     {
+      key: "prepareUncached",
+      type: "boolean",
+      label: "Show uncached torrents",
+      default: false,
+      hint: "TorBox only. Results marked Prepare need an availability check. View files or Download may start preparation in your account; search again later to download. Automatic grabs can also start preparation. This uses your provider allowance; BookOrbit cannot finish it automatically.",
+    },
+    {
       key: "indexerPaths",
       type: "string",
       label: "Torznab API paths",
