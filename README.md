@@ -3,9 +3,8 @@
 Find cached ebooks and audiobooks through your indexers and debrid account.
 BookOrbit downloads the files directly; you do not need a local torrent client.
 
-**Early preview:** TorBox is the first provider. Search works, but downloads are
-not ready: TorBox currently returns links containing the account API key, which
-the plugin blocks to keep credentials private.
+**Early preview:** TorBox is the first provider. Live search is verified;
+downloads and BookOrbit imports are still being tested.
 
 ## Setup
 
@@ -26,6 +25,10 @@ the plugin blocks to keep credentials private.
 
 BookOrbit stores these credentials encrypted. Your server needs
 `BOOK_REQUEST_ENCRYPTION_KEY` configured.
+
+TorBox download links also contain your API key. BookOrbit keeps the link on
+your server while downloading; database backups may retain it. Keep those
+links and backups private.
 
 Searches show cached files only. Selecting a result rechecks its availability;
 if it has left the cache, search again. Uncached torrents are never queued.

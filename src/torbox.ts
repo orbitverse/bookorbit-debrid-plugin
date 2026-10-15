@@ -5,6 +5,10 @@ import { File, Hash, Size, fail, type Selection } from "./model.js";
 import { decode, json, request, Network } from "./http.js";
 
 const base = "https://api.torbox.app/v1/api/torrents/";
+// CDN list: https://support.torbox.app/en/articles/13181686-accessing-torbox-with-nextdns
+const cdnDomains = ["cx", "io", "pw", "sh", "st", "to", "earth"].map(
+  (suffix) => `.tb-cdn.${suffix}`,
+);
 const CacheItem = Schema.Struct({
   hash: Hash,
   name: Schema.NonEmptyString,
@@ -197,25 +201,34 @@ export const resolve = Effect.fnUntraced(function* (
     yield* call(`requestdl?${params}`, key, {}, false),
     "TorBox download",
   );
-  if (
-    destination.includes(key) ||
-    destination.includes(encodeURIComponent(key))
-  )
-    return yield* Effect.fail(
-      fail(
-        "TorBox did not return a safe direct download link: it contains your API key. The download was blocked to keep credentials private.",
-      ),
-    );
   return yield* Effect.try({
     try: () => {
       const url = new URL(destination);
+      // BookOrbit also checks the resolved address before downloading.
+      const hostname = url.hostname.replace(/\.$/, "");
       if (
         url.protocol !== "https:" ||
         url.username ||
         url.password ||
-        url.origin === new URL(base).origin
+        hostname === new URL(base).hostname ||
+        !hostname.includes(".") ||
+        /^[\d.]+$/.test(hostname) ||
+        hostname.includes(":") ||
+        /\.(?:localhost|local|internal|lan)$/.test(hostname)
       )
         throw Error();
+      // Native TorBox downloads carry the account token on its own CDN.
+      if (decodeURIComponent(url.href).includes(key)) {
+        if (
+          !cdnDomains.some((domain) => hostname.endsWith(domain)) ||
+          url.searchParams.getAll("token").length !== 1 ||
+          url.searchParams.get("token") !== key
+        )
+          throw Error();
+        const withoutToken = new URL(url);
+        withoutToken.searchParams.delete("token");
+        if (decodeURIComponent(withoutToken.href).includes(key)) throw Error();
+      }
       return url.href;
     },
     catch: () => fail("TorBox did not return a safe direct download link."),

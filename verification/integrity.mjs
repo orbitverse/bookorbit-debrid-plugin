@@ -13,7 +13,10 @@ import { resolve } from "node:path";
 import * as Schema from "effect/Schema";
 
 const cases = [];
-for (const injected of ["assertion", "duplicate"]) {
+const corpus = JSON.parse(
+  await readFile(new URL("./corpus.json", import.meta.url), "utf8"),
+);
+for (const injected of ["assertion", "duplicate", "identity"]) {
   const directory = await mkdtemp(
     resolve(tmpdir(), "bookorbit-verification-integrity-"),
   );
@@ -32,16 +35,32 @@ for (const injected of ["assertion", "duplicate"]) {
     );
     assert.equal(child.status, 1);
     assert.equal(report.outcomes.failed, 1);
-    assert.equal(report.outcomes.passed, 38);
+    assert.equal(report.outcomes.passed, report.sampleCount - 1);
+    assert.equal(
+      report.outcomes.safetySamples,
+      corpus.filter((sample) => !sample.metricGroup).length *
+        report.repetitions,
+    );
+    assert.equal(
+      report.outcomes.safetySamples + report.outcomes.labeledSamples,
+      report.sampleCount,
+    );
     assert.equal(report.gates.safeHandoff, false);
     assert.equal(report.gates.credentialRedaction, false);
     if (injected === "duplicate") assert.equal(report.formatSelection.fp, 1);
+    if (injected === "identity") {
+      assert.equal(report.formatSelection.fp, 0);
+      assert.equal(report.labeledMatching.identity.fp, 1);
+      assert.equal(report.labeledMatching.identity.fn, 1);
+    }
     assert(!JSON.stringify(report).includes("SYNTHETIC/"));
+    assert(!JSON.stringify(report).includes("SYNTHETIC%2F"));
     cases.push({
       id: injected,
       exitCode: child.status,
       failedSamples: report.outcomes.failed,
       falsePositives: report.formatSelection.fp,
+      identityFalsePositives: report.labeledMatching.identity.fp,
       passed: true,
     });
   } finally {
@@ -89,6 +108,7 @@ Schema.decodeUnknownSync(
         exitCode: Schema.Int,
         failedSamples: Schema.Int,
         falsePositives: Schema.Int,
+        identityFalsePositives: Schema.Int,
         passed: Schema.Boolean,
       }),
     ),

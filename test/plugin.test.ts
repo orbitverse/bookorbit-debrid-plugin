@@ -228,10 +228,20 @@ test("pending and wrong-hash provider responses are never downloadable", async (
     assert(!f.calls.some((c) => c.url.pathname.endsWith("requestdl")));
   }
 });
-test("provider keys and unsafe URLs cannot escape in the handoff", async () => {
+test("download URLs reject unsafe destinations and misplaced provider credentials", async () => {
   for (const link of [
     "http://cdn.example/book",
-    `https://cdn.example/book?key=${providerKey}`,
+    "https://127.0.0.1/book",
+    "https://[::1]/book",
+    "https://nas.local/book",
+    "https://localhost./book",
+    "https://user:password@cdn.example/book",
+    `https://cdn.example/book?token=${providerKey.replaceAll("_", "%5F")}`,
+    `https://cdn.tb-cdn.st.example.com/book?token=${providerKey}`,
+    `https://cdn.tb-cdn.st/book?key=${providerKey}`,
+    `https://cdn.tb-cdn.st/book?token=presigned-${providerKey}-ticket`,
+    `https://cdn.tb-cdn.st/book?token=${providerKey}&token=${providerKey}`,
+    `https://cdn.tb-cdn.st/${providerKey}?token=${providerKey}`,
     `https://api.torbox.app/v1/api/torrents/requestdl?token=${providerKey}`,
   ]) {
     const f = fixture({ link });
@@ -243,7 +253,12 @@ test("provider keys and unsafe URLs cannot escape in the handoff", async () => {
     );
     await assert.rejects(
       plugin.resolveFile!(release, cfg, f.host, new AbortController().signal),
-      /safe direct download/,
+      (error: Error) => {
+        assert.match(error.message, /safe direct download/);
+        assert(!error.message.includes(providerKey));
+        assert(!error.message.includes(link));
+        return true;
+      },
     );
   }
 });
@@ -404,22 +419,30 @@ test("a usable six-second indexer response is kept within the search budget", as
   assert.equal(releases.length, 1);
 });
 
-test("TorBox CDN links embedding the account key report a safe actionable error", async () => {
-  const f = fixture({
-    link: `https://cdn.example/book.epub?token=presigned-${providerKey}-ticket`,
-  });
-  const [release] = await plugin.search(
-    q,
-    cfg,
-    f.host,
-    new AbortController().signal,
-  );
-  await assert.rejects(
-    plugin.resolveFile!(release, cfg, f.host, new AbortController().signal),
-    (error: Error) => {
-      assert.match(error.message, /contains your API key/);
-      assert(!error.message.includes(providerKey));
-      return true;
-    },
-  );
+test("native TorBox token links pass privately without entering search identifiers or logs", async () => {
+  for (const suffix of ["cx", "io", "pw", "sh", "st", "to", "earth"]) {
+    const link = `https://cdn.tb-cdn.${suffix}/dld/fixture?token=${providerKey}`;
+    const f = fixture({ link });
+    const logs: string[] = [];
+    f.host.logger = {
+      log: (message) => logs.push(message),
+      warn: (message) => logs.push(message),
+    };
+    const [release] = await plugin.search(
+      q,
+      cfg,
+      f.host,
+      new AbortController().signal,
+    );
+    const file = await plugin.resolveFile!(
+      release,
+      cfg,
+      f.host,
+      new AbortController().signal,
+    );
+    assert.equal(file.url, link);
+    assert(!JSON.stringify(release).includes(providerKey));
+    assert(!JSON.stringify(logs).includes(providerKey));
+    assert(!JSON.stringify(logs).includes(link));
+  }
 });
