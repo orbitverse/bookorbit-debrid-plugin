@@ -28,7 +28,12 @@ export const Size = Schema.Int.check(
 );
 export const File = Schema.Struct({ name: Schema.NonEmptyString, size: Size });
 export type File = typeof File.Type;
-export const Provider = Schema.Literals(["torbox", "easydebrid", "realdebrid"]);
+export const Provider = Schema.Literals([
+  "torbox",
+  "easydebrid",
+  "realdebrid",
+  "debridlink",
+]);
 export type Provider = typeof Provider.Type;
 export const Selection = Schema.Struct({
   provider: Provider,
@@ -64,7 +69,7 @@ export const config = (cfg: PluginIndexerConfig) => {
     if (!account.indexerKey.trim() || !account.debrid.key.trim()) throw Error();
   } catch {
     throw fail(
-      'Paste the account JSON from the README into API key, with indexerKey and debrid: { provider: "torbox", key: "..." }. Supported providers: torbox, easydebrid, realdebrid.',
+      'Paste the account JSON from the README into API key, with indexerKey and debrid: { provider: "torbox", key: "..." }. Supported providers: torbox, easydebrid, realdebrid, debridlink.',
       "unauthorized",
     );
   }

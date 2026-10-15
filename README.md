@@ -3,7 +3,7 @@
 Find ebooks and audiobooks through your indexers and debrid account.
 BookOrbit downloads the files directly; you do not need a local torrent client.
 
-**Early preview:** Supports TorBox, EasyDebrid and Real-Debrid. Only TorBox has been verified with live BookOrbit downloads.
+**Early preview:** Supports TorBox, EasyDebrid, Real-Debrid and Debrid-Link. Only TorBox has been verified with live BookOrbit downloads.
 
 ## Setup
 
@@ -32,9 +32,11 @@ Choose your provider in the JSON:
 | `torbox`     | TorBox API key                | Ebooks, single-file and multi-track audiobooks                       |
 | `easydebrid` | EasyDebrid OAuth access token | Cached ebooks and single-file audiobooks                             |
 | `realdebrid` | Real-Debrid API token         | Ebooks and single-file audiobooks already downloaded in your account |
+| `debridlink` | Debrid-Link API/OAuth token   | Ebooks and single-file audiobooks already downloaded in your account |
 
-Real-Debrid searches your account, not the shared cache. Use preparation below
-to add a new torrent. This preview supports accounts with at most 100 torrents.
+Real-Debrid and Debrid-Link search your account, not the shared cache. Use
+preparation below to add a new torrent. This preview supports accounts with at
+most 100 torrents.
 
 TorBox download links also contain your API key. BookOrbit keeps the link on
 your server while downloading; database backups may retain it. Keep those
@@ -42,7 +44,7 @@ links and backups private.
 
 Searches show ready files by default. Selecting a result rechecks its availability.
 
-With TorBox or Real-Debrid, you can enable **Show uncached torrents**. Results marked **Prepare**
+With TorBox, Real-Debrid or Debrid-Link, you can enable **Show uncached torrents**. Results marked **Prepare**
 need an availability check and may need fetching first. Clicking **View files** or **Download release** may start
 preparation in your account; automatic grabs can also start it. One preparation candidate is offered only when no ready books were found. Search again later and select a ready file to download;
 BookOrbit will not finish the request automatically. Your provider's account limits

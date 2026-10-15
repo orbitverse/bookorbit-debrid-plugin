@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as TorBox from "./torbox.js";
 import * as EasyDebrid from "./easydebrid.js";
 import * as RealDebrid from "./realdebrid.js";
+import * as DebridLink from "./debridlink.js";
 import type { Provider } from "./model.js";
 
 const providers = {
@@ -31,6 +32,15 @@ const providers = {
     prepare: RealDebrid.prepare,
     resolve: RealDebrid.resolve,
     verify: RealDebrid.verify,
+  },
+  debridlink: {
+    label: "Debrid-Link account",
+    supportsZip: false,
+    cached: DebridLink.cached,
+    available: null,
+    prepare: DebridLink.prepare,
+    resolve: DebridLink.resolve,
+    verify: DebridLink.verify,
   },
 };
 

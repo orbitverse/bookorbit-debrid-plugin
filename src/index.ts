@@ -57,7 +57,7 @@ export default {
       type: "boolean",
       label: "Show uncached torrents",
       default: false,
-      hint: "TorBox and Real-Debrid. Results marked Prepare need an availability check. View files or Download may start preparation in your account; search again later to download. Automatic grabs can also start preparation. This uses your provider allowance; BookOrbit cannot finish it automatically.",
+      hint: "TorBox, Real-Debrid and Debrid-Link. Results marked Prepare need an availability check. View files or Download may start preparation in your account; search again later to download. Automatic grabs can also start preparation. This uses your provider allowance; BookOrbit cannot finish it automatically.",
     },
     {
       key: "indexerPaths",
