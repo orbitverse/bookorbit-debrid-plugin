@@ -1,0 +1,30 @@
+{
+  "name": "bookorbit-debrid-plugin",
+  "version": "0.1.0",
+  "description": "Cached ebook and audiobook downloads for BookOrbit",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "knip",
+    "test": "tsx --test test/*.test.ts",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@12.11.2",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "effect": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "knip": "^6.41.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}
