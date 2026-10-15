@@ -430,3 +430,50 @@ test("ambiguous file selection is not repeated after account selected bits chang
   });
   assert.equal(mutations(f.calls).length, 1);
 });
+
+test("Real-Debrid rejects a selected nonnumbered chapter when the full manifest has other audio", async () => {
+  const f = fixture({
+    details: () =>
+      torrent({
+        files: [
+          { id: 1, path: "/Book - Prologue.mp3", bytes: 123, selected: 1 },
+          { id: 2, path: "/Book - Epilogue.mp3", bytes: 123, selected: 0 },
+        ],
+      }),
+  });
+  assert.deepEqual(await f.run(RD.cached([hash], key)), []);
+  await assert.rejects(
+    f.run(RD.prepare(hash, key, { title: "Book", mediaKind: "audiobook" })),
+    /single-file|complete book/,
+  );
+  await assert.rejects(
+    f.run(
+      RD.resolve(
+        {
+          hash,
+          format: "mp3",
+          files: [{ name: "Book - Prologue.mp3", size: 123 }],
+        },
+        key,
+      ),
+    ),
+    /not ready/,
+  );
+  assert.deepEqual(mutations(f.calls), []);
+});
+
+test("Real-Debrid preserves a full single-file audiobook alongside unselected ebooks", async () => {
+  const f = fixture({
+    details: () =>
+      torrent({
+        files: [
+          { id: 1, path: "/Book.m4b", bytes: 123, selected: 1 },
+          { ...file, id: 2, selected: 0 },
+        ],
+      }),
+  });
+  assert.deepEqual(await f.run(RD.cached([hash], key)), [
+    { hash, name: "Book", files: [{ name: "Book.m4b", size: 123 }] },
+  ]);
+  assert.deepEqual(mutations(f.calls), []);
+});

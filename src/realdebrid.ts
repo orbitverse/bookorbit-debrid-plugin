@@ -10,7 +10,7 @@ import {
   type PluginReleaseQuery,
 } from "./model.js";
 import { decode, json, request } from "./http.js";
-import { selectFiles } from "./books.js";
+import { isAudioFile, selectFiles } from "./books.js";
 
 const base = "https://api.real-debrid.com/rest/1.0/";
 const Id = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,200}$/));
@@ -120,6 +120,8 @@ const singleton = (torrent: typeof Torrent.Type) => {
   return torrent.status === "downloaded" &&
     torrent.progress === 100 &&
     selected.length === 1 &&
+    (!isAudioFile(selected[0].path) ||
+      torrent.files.filter((file) => isAudioFile(file.path)).length === 1) &&
     torrent.links.length === 1 &&
     selected[0].bytes > 0
     ? {
