@@ -386,3 +386,40 @@ test("oversized and malformed cache records do not hide a healthy book", async (
     1,
   );
 });
+
+test("a usable six-second indexer response is kept within the search budget", async () => {
+  const f = fixture();
+  const fetch = f.host.fetch;
+  f.host.fetch = async (input, init) => {
+    if (new URL(input).hostname === "prowlarr.example")
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+    return fetch(input, init);
+  };
+  const releases = await plugin.search(
+    q,
+    cfg,
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(releases.length, 1);
+});
+
+test("TorBox CDN links embedding the account key report a safe actionable error", async () => {
+  const f = fixture({
+    link: `https://cdn.example/book.epub?token=presigned-${providerKey}-ticket`,
+  });
+  const [release] = await plugin.search(
+    q,
+    cfg,
+    f.host,
+    new AbortController().signal,
+  );
+  await assert.rejects(
+    plugin.resolveFile!(release, cfg, f.host, new AbortController().signal),
+    (error: Error) => {
+      assert.match(error.message, /contains your API key/);
+      assert(!error.message.includes(providerKey));
+      return true;
+    },
+  );
+});

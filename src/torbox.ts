@@ -197,6 +197,15 @@ export const resolve = Effect.fnUntraced(function* (
     yield* call(`requestdl?${params}`, key, {}, false),
     "TorBox download",
   );
+  if (
+    destination.includes(key) ||
+    destination.includes(encodeURIComponent(key))
+  )
+    return yield* Effect.fail(
+      fail(
+        "TorBox did not return a safe direct download link: it contains your API key. The download was blocked to keep credentials private.",
+      ),
+    );
   return yield* Effect.try({
     try: () => {
       const url = new URL(destination);
@@ -204,9 +213,7 @@ export const resolve = Effect.fnUntraced(function* (
         url.protocol !== "https:" ||
         url.username ||
         url.password ||
-        url.origin === new URL(base).origin ||
-        destination.includes(key) ||
-        destination.includes(encodeURIComponent(key))
+        url.origin === new URL(base).origin
       )
         throw Error();
       return url.href;
