@@ -1,0 +1,94 @@
+[
+  {
+    "id": "ebook-formats",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub", "Pride and Prejudice.pdf"],
+    "expected": ["epub", "pdf"]
+  },
+  {
+    "id": "audio-single",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice.m4b"],
+    "expected": ["m4b"]
+  },
+  {
+    "id": "audio-tracks",
+    "media": "audiobook",
+    "files": [
+      "Pride and Prejudice/01.mp3",
+      "Pride and Prejudice/02.mp3",
+      "Pride and Prejudice/03.mp3"
+    ],
+    "expected": ["zip"]
+  },
+  {
+    "id": "chapter-only",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice/01.mp3"],
+    "expected": []
+  },
+  {
+    "id": "track-gap",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice/01.mp3", "Pride and Prejudice/03.mp3"],
+    "expected": []
+  },
+  {
+    "id": "ambiguous-archive",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice.zip"],
+    "expected": []
+  },
+  {
+    "id": "unrelated-book",
+    "media": "ebook",
+    "files": ["Another Book.epub"],
+    "expected": []
+  },
+  {
+    "id": "cache-miss",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": [],
+    "behavior": "miss"
+  },
+  {
+    "id": "partial-indexer",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "partial"
+  },
+  {
+    "id": "cache-eviction",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "evicted",
+    "resolve": "blocked"
+  },
+  {
+    "id": "key-bearing-link",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "unsafe",
+    "resolve": "blocked"
+  },
+  {
+    "id": "encoded-key-link",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "encoded",
+    "resolve": "blocked"
+  },
+  {
+    "id": "cancelled-search",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": [],
+    "behavior": "cancel",
+    "search": "blocked"
+  }
+]

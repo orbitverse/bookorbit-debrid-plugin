@@ -7,9 +7,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "knip",
     "test": "tsx --test test/*.test.ts",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm verify",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "verify": "pnpm build && node verification/run.mjs",
+    "verify:budgets": "pnpm build && node verification/budgets.mjs",
+    "verify:integrity": "pnpm build && node verification/integrity.mjs"
   },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@12.11.2",
