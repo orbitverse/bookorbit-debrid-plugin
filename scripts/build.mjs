@@ -46,6 +46,8 @@ assert(
 );
 const packageInfo = JSON.parse(await readFile("package.json", "utf8"));
 assert.equal(plugin.version, packageInfo.version);
+assert.match(plugin.update.ed25519PublicKey, /^[A-Za-z0-9_-]{43}$/);
+assert.equal(new URL(plugin.update.manifestUrl).protocol, "https:");
 await writeFile("dist/plugin.json", JSON.stringify(plugin, null, 2) + "\n");
 console.log(
   `BookOrbit upload checks passed: ${bytes}/524288 bytes, isolated import succeeded (${plugin.version}).`,

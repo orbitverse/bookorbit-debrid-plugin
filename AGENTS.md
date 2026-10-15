@@ -11,3 +11,4 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` completely. Con
 - Keep provider protocols in their module, matching/file selection pure, and the BookOrbit adapter small. Avoid abstractions for unsupported providers.
 - Run `pnpm check` before delivering the single `dist/index.mjs` file. Tests use synthetic accounts and fixture responses. Live acquisition is a separate check.
 - README is for casual users. Keep research and development-history notes out of public documentation.
+- To release, bump `package.json` and merge a passing PR. Actions signs and publishes from the main-only `plugin-signing` environment.

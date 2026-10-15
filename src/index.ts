@@ -1,4 +1,5 @@
 import packageInfo from "../package.json" with { type: "json" };
+import releaseConfig from "../release.json" with { type: "json" };
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -40,8 +41,12 @@ const run = async <A>(
 export default {
   apiVersion: 1,
   version: packageInfo.version,
-  type: "bookorbit-debrid-plugin",
+  type: releaseConfig.type,
   label: "BookOrbit Debrid",
+  update: {
+    manifestUrl: `https://github.com/${releaseConfig.repository}/releases/latest/download/${releaseConfig.type}.json`,
+    ed25519PublicKey: releaseConfig.publicKey,
+  },
   requiresCredential: true,
   credentialKind: "apiKey",
   mediaKinds: ["ebook", "audiobook"],
