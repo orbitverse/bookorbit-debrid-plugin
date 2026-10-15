@@ -66,6 +66,10 @@ function fixture(
       assert.equal(url.origin, "https://api.torbox.app");
       assert.equal(init?.headers?.Authorization, `Bearer ${providerKey}`);
       if (url.pathname.endsWith("checkcached")) {
+        if (JSON.parse(init!.body!).hashes.length === 0) {
+          assert.deepEqual(JSON.parse(init!.body!), { hashes: [] });
+          return json({});
+        }
         lookups++;
         assert.deepEqual(JSON.parse(init!.body!), { hashes: [hash] });
         return json(
@@ -228,10 +232,20 @@ test("pending and wrong-hash provider responses are never downloadable", async (
     assert(!f.calls.some((c) => c.url.pathname.endsWith("requestdl")));
   }
 });
-test("provider keys and unsafe URLs cannot escape in the handoff", async () => {
+test("download URLs reject unsafe destinations and misplaced provider credentials", async () => {
   for (const link of [
     "http://cdn.example/book",
-    `https://cdn.example/book?key=${providerKey}`,
+    "https://127.0.0.1/book",
+    "https://[::1]/book",
+    "https://nas.local/book",
+    "https://localhost./book",
+    "https://user:password@cdn.example/book",
+    `https://cdn.example/book?token=${providerKey.replaceAll("_", "%5F")}`,
+    `https://cdn.tb-cdn.st.example.com/book?token=${providerKey}`,
+    `https://cdn.tb-cdn.st/book?key=${providerKey}`,
+    `https://cdn.tb-cdn.st/book?token=presigned-${providerKey}-ticket`,
+    `https://cdn.tb-cdn.st/book?token=${providerKey}&token=${providerKey}`,
+    `https://cdn.tb-cdn.st/${providerKey}?token=${providerKey}`,
     `https://api.torbox.app/v1/api/torrents/requestdl?token=${providerKey}`,
   ]) {
     const f = fixture({ link });
@@ -243,7 +257,12 @@ test("provider keys and unsafe URLs cannot escape in the handoff", async () => {
     );
     await assert.rejects(
       plugin.resolveFile!(release, cfg, f.host, new AbortController().signal),
-      /safe direct download/,
+      (error: Error) => {
+        assert.match(error.message, /safe direct download/);
+        assert(!error.message.includes(providerKey));
+        assert(!error.message.includes(link));
+        return true;
+      },
     );
   }
 });
@@ -253,7 +272,7 @@ test("configuration rejects unknown providers and cross-origin API paths before 
     {
       credential: JSON.stringify({
         indexerKey: "x",
-        debrid: { provider: "realdebrid", key: "x" },
+        debrid: { provider: "unsupported-provider", key: "x" },
       }),
     },
     { settings: { indexerPaths: "//evil.example/api" } },
@@ -404,22 +423,343 @@ test("a usable six-second indexer response is kept within the search budget", as
   assert.equal(releases.length, 1);
 });
 
-test("TorBox CDN links embedding the account key report a safe actionable error", async () => {
-  const f = fixture({
-    link: `https://cdn.example/book.epub?token=presigned-${providerKey}-ticket`,
-  });
-  const [release] = await plugin.search(
+test("native TorBox token links pass privately without entering search identifiers or logs", async () => {
+  for (const suffix of ["cx", "io", "pw", "sh", "st", "to", "earth"]) {
+    const link = `https://cdn.tb-cdn.${suffix}/dld/fixture?token=${providerKey}`;
+    const f = fixture({ link });
+    const logs: string[] = [];
+    f.host.logger = {
+      log: (message) => logs.push(message),
+      warn: (message) => logs.push(message),
+    };
+    const [release] = await plugin.search(
+      q,
+      cfg,
+      f.host,
+      new AbortController().signal,
+    );
+    const file = await plugin.resolveFile!(
+      release,
+      cfg,
+      f.host,
+      new AbortController().signal,
+    );
+    assert.equal(file.url, link);
+    assert(!JSON.stringify(release).includes(providerKey));
+    assert(!JSON.stringify(logs).includes(providerKey));
+    assert(!JSON.stringify(logs).includes(link));
+  }
+});
+
+const publicIndexer = (id: number, category = 7020) => ({
+  id,
+  enable: true,
+  supportsSearch: true,
+  protocol: "torrent",
+  privacy: "public",
+  capabilities: { categories: [{ id: category }] },
+});
+function discoveryFixture(
+  metadata: unknown,
+  options: Parameters<typeof fixture>[0] = {},
+) {
+  const f = fixture(options);
+  const fetch = f.host.fetch;
+  const discovered: URL[] = [];
+  f.host.fetch = async (input, init) => {
+    const url = new URL(input);
+    discovered.push(url);
+    if (url.pathname.endsWith("/api/v1/indexer")) {
+      assert.equal(init?.headers?.["X-Api-Key"], "SYNTHETIC_INDEXER_KEY");
+      assert.equal(init?.headers?.Authorization, undefined);
+      assert.equal(url.search, "");
+      return Response.json(metadata);
+    }
+    return fetch(input, init);
+  };
+  return { ...f, discovered };
+}
+
+test("Prowlarr discovery searches only enabled public searchable torrent book feeds", async () => {
+  const f = discoveryFixture([
+    publicIndexer(1),
+    { ...publicIndexer(2), privacy: "private" },
+    { ...publicIndexer(3), privacy: "semiPrivate" },
+    { ...publicIndexer(4), privacy: undefined },
+    { ...publicIndexer(5), protocol: "usenet" },
+    { ...publicIndexer(6), enable: false },
+    { ...publicIndexer(7), supportsSearch: false },
+    publicIndexer(8, 3030),
+  ]);
+  const releases = await plugin.search(
     q,
-    cfg,
+    { ...cfg, settings: null },
     f.host,
     new AbortController().signal,
   );
+  assert.equal(releases.length, 1);
+  assert.deepEqual(
+    f.discovered
+      .filter((u) => u.hostname === "prowlarr.example")
+      .map((u) => u.pathname),
+    ["/api/v1/indexer", "/1/api"],
+  );
+});
+
+test("discovery follows nested audiobook categories and retains a reverse proxy base path", async () => {
+  const f = discoveryFixture(
+    [
+      publicIndexer(1),
+      {
+        ...publicIndexer(2),
+        capabilities: {
+          categories: [{ id: 3000, subCategories: [{ id: 3030 }] }],
+        },
+      },
+    ],
+    { files: tracks },
+  );
+  const [release] = await plugin.search(
+    { ...q, mediaKind: "audiobook" },
+    {
+      ...cfg,
+      baseUrl: cfg.baseUrl + "/prowlarr",
+      settings: { indexerPaths: "  " },
+    },
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(release.format, "zip");
+  assert.deepEqual(
+    f.discovered
+      .filter((u) => u.hostname === "prowlarr.example")
+      .map((u) => u.pathname),
+    ["/prowlarr/api/v1/indexer", "/prowlarr/2/api"],
+  );
+});
+
+test("empty, excessive and malformed discovery fail before any tracker is searched", async () => {
+  for (const [metadata, message] of [
+    [[publicIndexer(1, 3030)], /No enabled public ebook/],
+    [
+      Array.from({ length: 9 }, (_, i) => publicIndexer(i + 1)),
+      /More than eight/,
+    ],
+    [[{ ...publicIndexer(1), id: "1" }], /not recognized/],
+  ] as const) {
+    const f = discoveryFixture(metadata);
+    await assert.rejects(
+      plugin.search(
+        q,
+        { ...cfg, settings: {} },
+        f.host,
+        new AbortController().signal,
+      ),
+      message,
+    );
+    assert.equal(f.discovered.length, 1);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("discovery denial never guesses or falls back to tracker paths", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.host.fetch = async () => {
+    calls++;
+    return new Response("denied", { status: 401 });
+  };
+  await assert.rejects(
+    plugin.search(
+      q,
+      { ...cfg, settings: {} },
+      f.host,
+      new AbortController().signal,
+    ),
+    /Prowlarr: access denied/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("explicit Torznab overrides bypass discovery and retain Jackett paths", async () => {
+  const f = fixture();
+  const paths = "/api/v2.0/indexers/book-feed/results/torznab/api";
+  assert.equal(
+    (
+      await plugin.search(
+        q,
+        { ...cfg, settings: { indexerPaths: paths } },
+        f.host,
+        new AbortController().signal,
+      )
+    ).length,
+    1,
+  );
+  assert.equal(f.calls[0].url.pathname, paths);
+  assert(!f.calls.some((c) => c.url.pathname.endsWith("/api/v1/indexer")));
+});
+
+test("automatic connection test accepts audio-only indexers without searching a title", async () => {
+  const f = discoveryFixture([publicIndexer(1, 3030)]);
+  const result = await plugin.test({ ...cfg, settings: {} }, f.host);
+  assert.equal(result.success, true);
+  assert.match(
+    result.indexerName!,
+    /configuration and TorBox account access verified/,
+  );
+  assert.equal(f.discovered.length, 2);
+  assert(f.discovered.some((u) => u.pathname.endsWith("/api/v1/indexer")));
+  assert(f.discovered.some((u) => u.pathname.endsWith("/checkcached")));
+  assert(!f.discovered.some((u) => u.searchParams.has("q")));
+});
+
+test("automatic connection test rejects servers without either book category", async () => {
+  const f = discoveryFixture([publicIndexer(1, 5000)]);
+  const result = await plugin.test({ ...cfg, settings: {} }, f.host);
+  assert.equal(result.success, false);
+  assert("error" in result);
+  assert.match(result.error, /No enabled public ebook or audiobook/);
+  assert.equal(f.discovered.length, 2);
+});
+
+const easyCfg: PluginIndexerConfig = {
+  ...cfg,
+  credential: JSON.stringify({
+    indexerKey: "SYNTHETIC_INDEXER_KEY",
+    debrid: { provider: "easydebrid", key: providerKey },
+  }),
+};
+function easyPluginFixture(
+  options: { evicted?: boolean; changed?: boolean; audioTracks?: boolean } = {},
+) {
+  const f = fixture();
+  const fetch = f.host.fetch;
+  const calls: string[] = [];
+  let lookups = 0;
+  f.host.fetch = async (input, init) => {
+    const url = new URL(input);
+    calls.push(url.pathname);
+    if (url.hostname !== "easydebrid.com") return fetch(input, init);
+    assert.equal(init?.headers?.Authorization, `Bearer ${providerKey}`);
+    assert.equal(init?.redirect, "manual");
+    if (url.pathname.endsWith("lookupdetails")) {
+      lookups++;
+      assert.deepEqual(JSON.parse(init!.body!), {
+        urls: [`magnet:?xt=urn:btih:${hash}`],
+      });
+      return Response.json({
+        result: [
+          {
+            cached: !(options.evicted && lookups > 1),
+            files: (options.audioTracks ? tracks : [ebook]).map((file) => ({
+              name: file.name.split("/").pop(),
+              folder: file.name.includes("/") ? "The Little Prince" : "",
+              size: file.size + (options.changed && lookups > 1 ? 1 : 0),
+            })),
+          },
+        ],
+      });
+    }
+    assert.equal(url.pathname, "/api/v1/link/generate");
+    assert.deepEqual(JSON.parse(init!.body!), {
+      url: `magnet:?xt=urn:btih:${hash}`,
+    });
+    return Response.json({
+      files: [
+        {
+          filename: ebook.name,
+          directory: [],
+          size: ebook.size,
+          url: "https://cdn.example/book.epub?ticket=opaque",
+        },
+      ],
+    });
+  };
+  return { ...f, calls };
+}
+
+test("EasyDebrid plugin search is read-only and resolution rechecks before generating a link", async () => {
+  const f = easyPluginFixture();
+  const [release] = await plugin.search(
+    q,
+    easyCfg,
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(JSON.parse(release.guid).provider, "easydebrid");
+  assert.match(release.title, /EasyDebrid/);
+  assert(!release.guid.includes(providerKey));
+  assert.deepEqual(f.calls, ["/1/api", "/api/v1/link/lookupdetails"]);
+  const file = await plugin.resolveFile!(
+    release,
+    easyCfg,
+    f.host,
+    new AbortController().signal,
+  );
+  assert.deepEqual(file, {
+    url: "https://cdn.example/book.epub?ticket=opaque",
+    fileName: ebook.name,
+    sizeBytes: ebook.size,
+    format: "epub",
+  });
+  assert.deepEqual(f.calls.slice(2), [
+    "/api/v1/link/lookupdetails",
+    "/api/v1/link/generate",
+  ]);
+});
+
+test("changing a release's configured provider rejects resolution before networking", async () => {
+  const f = easyPluginFixture();
+  const [release] = await plugin.search(
+    q,
+    easyCfg,
+    f.host,
+    new AbortController().signal,
+  );
+  const before = f.calls.length;
   await assert.rejects(
     plugin.resolveFile!(release, cfg, f.host, new AbortController().signal),
-    (error: Error) => {
-      assert.match(error.message, /contains your API key/);
-      assert(!error.message.includes(providerKey));
-      return true;
-    },
+    /provider changed/,
   );
+  assert.equal(f.calls.length, before);
+});
+
+test("EasyDebrid eviction or changed manifest prevents link generation through the plugin", async () => {
+  for (const options of [{ evicted: true }, { changed: true }]) {
+    const f = easyPluginFixture(options);
+    const [release] = await plugin.search(
+      q,
+      easyCfg,
+      f.host,
+      new AbortController().signal,
+    );
+    await assert.rejects(
+      plugin.resolveFile!(
+        release,
+        easyCfg,
+        f.host,
+        new AbortController().signal,
+      ),
+      /no download was queued/,
+    );
+    assert.equal(
+      f.calls.filter((path) => path.endsWith("lookupdetails")).length,
+      2,
+    );
+    assert(!f.calls.some((path) => path.endsWith("generate")));
+  }
+});
+
+test("EasyDebrid plugin omits tracksets that it cannot deliver as a complete ZIP", async () => {
+  const f = easyPluginFixture({ audioTracks: true });
+  assert.deepEqual(
+    await plugin.search(
+      { ...q, mediaKind: "audiobook" },
+      easyCfg,
+      f.host,
+      new AbortController().signal,
+    ),
+    [],
+  );
+  assert(!f.calls.some((path) => path.endsWith("generate")));
 });

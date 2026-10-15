@@ -53,11 +53,18 @@ export default {
     "Your Prowlarr or Jackett server address. For a local server, enable Allow private addresses. Paste the account JSON from the README into API key.",
   settingsFields: [
     {
+      key: "prepareUncached",
+      type: "boolean",
+      label: "Show uncached torrents",
+      default: false,
+      hint: "TorBox, Real-Debrid and Debrid-Link. Results marked Prepare need an availability check. View files or Download may start preparation in your account; search again later to download. Automatic grabs can also start preparation. This uses your provider allowance; BookOrbit cannot finish it automatically.",
+    },
+    {
       key: "indexerPaths",
       type: "string",
       label: "Torznab API paths",
-      default: "/1/api",
-      hint: "Copy paths from your chosen public book indexers, for example /1/api,/2/api in Prowlarr. Use only the path; keep API keys in the encrypted JSON.",
+      default: "",
+      hint: "Leave blank to find public book indexers in Prowlarr automatically. For Jackett or a custom selection, enter paths such as /1/api,/2/api without query strings.",
     },
   ],
   search: (q, cfg, host, signal) => run(Library.search(q, cfg), host, signal),
