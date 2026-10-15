@@ -1,7 +1,87 @@
 import { load } from "cheerio/slim";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { fail, type PluginReleaseQuery } from "./model.js";
-import { request } from "./http.js";
+import { decode, json, request } from "./http.js";
+
+interface Category {
+  readonly id: number;
+  readonly subCategories?: readonly Category[];
+}
+const Category = Schema.Struct({
+  id: Schema.Int,
+  subCategories: Schema.optionalKey(
+    Schema.Array(Schema.suspend((): Schema.Codec<Category> => Category)),
+  ),
+});
+const Indexer = Schema.Struct({
+  id: Schema.Int.check(
+    Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  ),
+  enable: Schema.Boolean,
+  supportsSearch: Schema.optionalKey(Schema.Boolean),
+  protocol: Schema.optionalKey(Schema.String),
+  privacy: Schema.optionalKey(Schema.String),
+  capabilities: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        categories: Schema.Array(Category),
+      }),
+    ),
+  ),
+});
+
+export const discover = Effect.fnUntraced(function* (
+  baseUrl: string,
+  key: string,
+  mediaKinds: readonly PluginReleaseQuery["mediaKind"][],
+) {
+  const base = baseUrl.replace(/\/+$/, "") + "/";
+  const response = yield* request(
+    new URL("api/v1/indexer", base).href,
+    "Prowlarr",
+    {
+      headers: { "X-Api-Key": key },
+    },
+  );
+  const indexers = yield* decode(
+    Schema.Array(Indexer),
+    yield* json(response),
+    "Prowlarr indexers",
+  );
+  const categories = new Set<number>(
+    mediaKinds.map((kind) => (kind === "audiobook" ? 3030 : 7020)),
+  );
+  const supports = (tree: readonly Category[]): boolean =>
+    tree.some((c) => categories.has(c.id) || supports(c.subCategories ?? []));
+  const ids = [
+    ...new Set(
+      indexers
+        .filter(
+          (i) =>
+            i.enable &&
+            i.supportsSearch === true &&
+            i.protocol === "torrent" &&
+            i.privacy === "public" &&
+            supports(i.capabilities?.categories ?? []),
+        )
+        .map((i) => i.id),
+    ),
+  ];
+  if (!ids.length)
+    return yield* Effect.fail(
+      fail(
+        `No enabled public ${mediaKinds.length === 1 ? mediaKinds[0] : "ebook or audiobook"} indexers found in Prowlarr. Add one with the matching category, or enter Torznab API paths for another server.`,
+      ),
+    );
+  if (ids.length > 8)
+    return yield* Effect.fail(
+      fail(
+        "More than eight matching public indexers found. Choose up to eight using Torznab API paths.",
+      ),
+    );
+  return ids.map((id) => new URL(`${id}/api`, base).href);
+});
 
 type Torrent = {
   hash: string;

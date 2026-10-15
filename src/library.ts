@@ -10,7 +10,7 @@ import {
 } from "./model.js";
 import type { PluginIndexerConfig } from "../vendor/bookorbit-plugin-api.js";
 import { Network, decode } from "./http.js";
-import { searchFeed } from "./torznab.js";
+import { discover, searchFeed } from "./torznab.js";
 import * as TorBox from "./torbox.js";
 import { matches, selectFiles, safeFileName } from "./books.js";
 
@@ -43,7 +43,10 @@ export const search = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   cfg: PluginIndexerConfig,
 ) {
-  const { account, endpoints } = yield* prepare(cfg);
+  const { account, endpoints: configured, baseUrl } = yield* prepare(cfg);
+  const endpoints = configured.length
+    ? configured
+    : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
   const host = yield* Network;
   const outcomes = yield* Effect.forEach(
     endpoints,
@@ -164,8 +167,16 @@ export const resolveFile = Effect.fnUntraced(function* (
 });
 
 export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
-  const { account } = yield* prepare(cfg);
+  const { account, endpoints, baseUrl } = yield* prepare(cfg);
   yield* TorBox.cached([], account.debrid.key);
+  if (!endpoints.length) {
+    yield* discover(baseUrl, account.indexerKey, ["ebook", "audiobook"]);
+    return {
+      success: true,
+      indexerName:
+        "BookOrbit Debrid: Prowlarr indexer configuration and TorBox cache access verified",
+    };
+  }
   const q: PluginReleaseQuery = {
     title: "Pride and Prejudice",
     author: "Jane Austen",

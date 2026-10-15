@@ -66,6 +66,10 @@ function fixture(
       assert.equal(url.origin, "https://api.torbox.app");
       assert.equal(init?.headers?.Authorization, `Bearer ${providerKey}`);
       if (url.pathname.endsWith("checkcached")) {
+        if (JSON.parse(init!.body!).hashes.length === 0) {
+          assert.deepEqual(JSON.parse(init!.body!), { hashes: [] });
+          return json({});
+        }
         lookups++;
         assert.deepEqual(JSON.parse(init!.body!), { hashes: [hash] });
         return json(
@@ -445,4 +449,175 @@ test("native TorBox token links pass privately without entering search identifie
     assert(!JSON.stringify(logs).includes(providerKey));
     assert(!JSON.stringify(logs).includes(link));
   }
+});
+
+const publicIndexer = (id: number, category = 7020) => ({
+  id,
+  enable: true,
+  supportsSearch: true,
+  protocol: "torrent",
+  privacy: "public",
+  capabilities: { categories: [{ id: category }] },
+});
+function discoveryFixture(
+  metadata: unknown,
+  options: Parameters<typeof fixture>[0] = {},
+) {
+  const f = fixture(options);
+  const fetch = f.host.fetch;
+  const discovered: URL[] = [];
+  f.host.fetch = async (input, init) => {
+    const url = new URL(input);
+    discovered.push(url);
+    if (url.pathname.endsWith("/api/v1/indexer")) {
+      assert.equal(init?.headers?.["X-Api-Key"], "SYNTHETIC_INDEXER_KEY");
+      assert.equal(init?.headers?.Authorization, undefined);
+      assert.equal(url.search, "");
+      return Response.json(metadata);
+    }
+    return fetch(input, init);
+  };
+  return { ...f, discovered };
+}
+
+test("Prowlarr discovery searches only enabled public searchable torrent book feeds", async () => {
+  const f = discoveryFixture([
+    publicIndexer(1),
+    { ...publicIndexer(2), privacy: "private" },
+    { ...publicIndexer(3), privacy: "semiPrivate" },
+    { ...publicIndexer(4), privacy: undefined },
+    { ...publicIndexer(5), protocol: "usenet" },
+    { ...publicIndexer(6), enable: false },
+    { ...publicIndexer(7), supportsSearch: false },
+    publicIndexer(8, 3030),
+  ]);
+  const releases = await plugin.search(
+    q,
+    { ...cfg, settings: null },
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(releases.length, 1);
+  assert.deepEqual(
+    f.discovered
+      .filter((u) => u.hostname === "prowlarr.example")
+      .map((u) => u.pathname),
+    ["/api/v1/indexer", "/1/api"],
+  );
+});
+
+test("discovery follows nested audiobook categories and retains a reverse proxy base path", async () => {
+  const f = discoveryFixture(
+    [
+      publicIndexer(1),
+      {
+        ...publicIndexer(2),
+        capabilities: {
+          categories: [{ id: 3000, subCategories: [{ id: 3030 }] }],
+        },
+      },
+    ],
+    { files: tracks },
+  );
+  const [release] = await plugin.search(
+    { ...q, mediaKind: "audiobook" },
+    {
+      ...cfg,
+      baseUrl: cfg.baseUrl + "/prowlarr",
+      settings: { indexerPaths: "  " },
+    },
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(release.format, "zip");
+  assert.deepEqual(
+    f.discovered
+      .filter((u) => u.hostname === "prowlarr.example")
+      .map((u) => u.pathname),
+    ["/prowlarr/api/v1/indexer", "/prowlarr/2/api"],
+  );
+});
+
+test("empty, excessive and malformed discovery fail before any tracker is searched", async () => {
+  for (const [metadata, message] of [
+    [[publicIndexer(1, 3030)], /No enabled public ebook/],
+    [
+      Array.from({ length: 9 }, (_, i) => publicIndexer(i + 1)),
+      /More than eight/,
+    ],
+    [[{ ...publicIndexer(1), id: "1" }], /not recognized/],
+  ] as const) {
+    const f = discoveryFixture(metadata);
+    await assert.rejects(
+      plugin.search(
+        q,
+        { ...cfg, settings: {} },
+        f.host,
+        new AbortController().signal,
+      ),
+      message,
+    );
+    assert.equal(f.discovered.length, 1);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("discovery denial never guesses or falls back to tracker paths", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.host.fetch = async () => {
+    calls++;
+    return new Response("denied", { status: 401 });
+  };
+  await assert.rejects(
+    plugin.search(
+      q,
+      { ...cfg, settings: {} },
+      f.host,
+      new AbortController().signal,
+    ),
+    /Prowlarr: access denied/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("explicit Torznab overrides bypass discovery and retain Jackett paths", async () => {
+  const f = fixture();
+  const paths = "/api/v2.0/indexers/book-feed/results/torznab/api";
+  assert.equal(
+    (
+      await plugin.search(
+        q,
+        { ...cfg, settings: { indexerPaths: paths } },
+        f.host,
+        new AbortController().signal,
+      )
+    ).length,
+    1,
+  );
+  assert.equal(f.calls[0].url.pathname, paths);
+  assert(!f.calls.some((c) => c.url.pathname.endsWith("/api/v1/indexer")));
+});
+
+test("automatic connection test accepts audio-only indexers without searching a title", async () => {
+  const f = discoveryFixture([publicIndexer(1, 3030)]);
+  const result = await plugin.test({ ...cfg, settings: {} }, f.host);
+  assert.equal(result.success, true);
+  assert.match(
+    result.indexerName!,
+    /configuration and TorBox cache access verified/,
+  );
+  assert.equal(f.discovered.length, 2);
+  assert(f.discovered.some((u) => u.pathname.endsWith("/api/v1/indexer")));
+  assert(f.discovered.some((u) => u.pathname.endsWith("/checkcached")));
+  assert(!f.discovered.some((u) => u.searchParams.has("q")));
+});
+
+test("automatic connection test rejects servers without either book category", async () => {
+  const f = discoveryFixture([publicIndexer(1, 5000)]);
+  const result = await plugin.test({ ...cfg, settings: {} }, f.host);
+  assert.equal(result.success, false);
+  assert("error" in result);
+  assert.match(result.error, /No enabled public ebook or audiobook/);
+  assert.equal(f.discovered.length, 2);
 });

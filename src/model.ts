@@ -74,7 +74,7 @@ export const config = (cfg: PluginIndexerConfig) => {
       "Use your Prowlarr or Jackett HTTP(S) address without credentials or a query.",
     );
   }
-  const raw = cfg.settings?.indexerPaths ?? "/1/api";
+  const raw = cfg.settings?.indexerPaths ?? "";
   if (typeof raw !== "string")
     throw fail("Indexer paths must be a comma-separated list.");
   const paths = [
@@ -85,7 +85,7 @@ export const config = (cfg: PluginIndexerConfig) => {
         .filter(Boolean),
     ),
   ];
-  if (!paths.length || paths.length > 8)
+  if (paths.length > 8)
     throw fail("Choose between one and eight Torznab API paths.");
   const endpoints = paths.map((path) => {
     const url = new URL(path, base);
@@ -103,5 +103,5 @@ export const config = (cfg: PluginIndexerConfig) => {
       );
     return url.href;
   });
-  return { account, endpoints };
+  return { account, endpoints, baseUrl: base.href };
 };
