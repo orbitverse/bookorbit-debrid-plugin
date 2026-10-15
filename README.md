@@ -3,8 +3,9 @@
 Find cached ebooks and audiobooks through your indexers and debrid account.
 BookOrbit downloads the files directly; you do not need a local torrent client.
 
-**Early preview:** TorBox is the first supported provider. Automated checks use
-fixtures; live downloads have not yet been verified.
+**Early preview:** TorBox is the first provider. Search works, but downloads are
+not ready: TorBox currently returns links containing the account API key, which
+the plugin blocks to keep credentials private.
 
 ## Setup
 
