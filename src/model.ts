@@ -28,7 +28,7 @@ export const Size = Schema.Int.check(
 );
 export const File = Schema.Struct({ name: Schema.NonEmptyString, size: Size });
 export type File = typeof File.Type;
-export const Provider = Schema.Literals(["torbox", "easydebrid"]);
+export const Provider = Schema.Literals(["torbox", "easydebrid", "realdebrid"]);
 export type Provider = typeof Provider.Type;
 export const Selection = Schema.Struct({
   provider: Provider,
@@ -41,7 +41,7 @@ export const Selection = Schema.Struct({
 export type Selection = typeof Selection.Type;
 export const Preparation = Schema.Struct({
   action: Schema.Literal("prepare"),
-  provider: Schema.Literal("torbox"),
+  provider: Provider,
   hash: Hash,
   title: Schema.NonEmptyString,
   media: Schema.Literals(["ebook", "audiobook"]),
@@ -64,7 +64,7 @@ export const config = (cfg: PluginIndexerConfig) => {
     if (!account.indexerKey.trim() || !account.debrid.key.trim()) throw Error();
   } catch {
     throw fail(
-      'Paste account JSON with indexerKey and debrid: { provider: "torbox" or "easydebrid", key: "..." } into API key.',
+      'Paste the account JSON from the README into API key, with indexerKey and debrid: { provider: "torbox", key: "..." }. Supported providers: torbox, easydebrid, realdebrid.',
       "unauthorized",
     );
   }

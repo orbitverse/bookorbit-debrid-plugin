@@ -272,7 +272,7 @@ test("configuration rejects unknown providers and cross-origin API paths before 
     {
       credential: JSON.stringify({
         indexerKey: "x",
-        debrid: { provider: "realdebrid", key: "x" },
+        debrid: { provider: "unsupported-provider", key: "x" },
       }),
     },
     { settings: { indexerPaths: "//evil.example/api" } },

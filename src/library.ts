@@ -128,7 +128,7 @@ export const search = Effect.fnUntraced(function* (
       if (ready.has(t.hash)) continue;
       const guid = JSON.stringify({
         action: "prepare",
-        provider: "torbox",
+        provider: account.debrid.provider,
         hash: t.hash,
         title: q.title,
         media: q.mediaKind,
@@ -173,7 +173,10 @@ export const resolveFile = Effect.fnUntraced(function* (
           "Enable Show uncached torrents and search again to prepare this release.",
         ),
       );
-    const result = yield* service.prepare(selection.hash, account.debrid.key);
+    const result = yield* service.prepare(selection.hash, account.debrid.key, {
+      title: selection.title,
+      mediaKind: selection.media,
+    });
     return yield* Effect.fail(
       fail(
         result.status === "ready"

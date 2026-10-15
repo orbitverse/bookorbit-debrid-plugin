@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as TorBox from "./torbox.js";
 import * as EasyDebrid from "./easydebrid.js";
+import * as RealDebrid from "./realdebrid.js";
 import type { Provider } from "./model.js";
 
 const providers = {
@@ -21,6 +22,15 @@ const providers = {
     prepare: null,
     resolve: EasyDebrid.resolve,
     verify: EasyDebrid.verify,
+  },
+  realdebrid: {
+    label: "Real-Debrid account",
+    supportsZip: false,
+    cached: RealDebrid.cached,
+    available: null,
+    prepare: RealDebrid.prepare,
+    resolve: RealDebrid.resolve,
+    verify: RealDebrid.verify,
   },
 };
 
