@@ -149,7 +149,7 @@ function downloadUrl(value: string, endpoint: string, key: string): URL {
   return url;
 }
 
-export const metadataHash = Effect.fnUntraced(function* (
+const metadataHash = Effect.fnUntraced(function* (
   value: string,
   endpoint: string,
   key: string,
@@ -248,3 +248,20 @@ export const metadataHash = Effect.fnUntraced(function* (
   }
   return yield* Effect.fail(fail("Torrent metadata could not be identified."));
 });
+
+// Each search owns this set; validate every feed's link before sharing work.
+export function metadataLookup(key: string) {
+  const lookups = new Map<string, ReturnType<typeof metadataHash>>();
+  return Effect.fnUntraced(function* (value: string, endpoint: string) {
+    const url = yield* Effect.try({
+      try: () => downloadUrl(value, endpoint, key).href,
+      catch: () => fail("Skipped an untrusted torrent metadata link."),
+    });
+    let lookup = lookups.get(url);
+    if (!lookup) {
+      lookup = yield* Effect.cached(metadataHash(url, endpoint, key));
+      lookups.set(url, lookup);
+    }
+    return yield* lookup;
+  });
+}

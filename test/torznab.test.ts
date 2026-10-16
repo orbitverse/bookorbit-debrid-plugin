@@ -3,7 +3,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import * as Effect from "effect/Effect";
 import { Network } from "../src/http.js";
-import { searchFeed } from "../src/torznab.js";
+import { searchFeeds } from "../src/torznab.js";
 import type {
   PluginHost,
   PluginReleaseQuery,
@@ -48,7 +48,7 @@ function fixture(items: string, reply: PluginHost["fetch"]) {
   };
   const run = (signal?: AbortSignal, path = endpoint) =>
     Effect.runPromise(
-      searchFeed(path, key, query).pipe(Effect.provideService(Network, host)),
+      searchFeeds(key, query)(path).pipe(Effect.provideService(Network, host)),
       { signal },
     );
   return { run, calls, warnings };
