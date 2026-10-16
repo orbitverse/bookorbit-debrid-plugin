@@ -3,8 +3,7 @@
 Find ebooks and audiobooks through Prowlarr or Jackett and your debrid account.
 BookOrbit downloads the files directly from your provider.
 
-**Early preview:** TorBox, EasyDebrid, Real-Debrid and Debrid-Link are supported.
-Only TorBox has been verified with live BookOrbit downloads.
+Use TorBox, EasyDebrid, Real-Debrid or Debrid-Link.
 
 ## Install
 
