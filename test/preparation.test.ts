@@ -91,13 +91,18 @@ function fixture(cached = false) {
 const signal = () => new AbortController().signal;
 
 test("uncached preparation is opt-in, read-only in search and explicit in result metadata", async () => {
+  assert.equal(
+    plugin.settingsFields?.find((field) => field.key === "prepareUncached")
+      ?.default,
+    false,
+  );
   const f = fixture();
   const disabled = { ...cfg, settings: { indexerPaths: "/1/api" } };
   assert.deepEqual(await plugin.search(query, disabled, f.host, signal()), []);
   const results = await plugin.search(query, cfg, f.host, signal());
   assert.equal(results.length, 1);
   const [release] = results;
-  assert.match(release.title, /Prepare in TorBox.*check availability/);
+  assert.match(release.title, /Prepare in TorBox.*download later/);
   assert(!release.title.includes("EPUB"));
   assert.equal(release.format, undefined);
   assert.equal(release.primaryFileCount, undefined);
@@ -109,7 +114,7 @@ test("uncached preparation is opt-in, read-only in search and explicit in result
   const before = f.calls.length;
   await assert.rejects(
     plugin.resolveFile!(release, disabled, f.host, signal()),
-    /Enable Show uncached torrents/,
+    /Enable Show uncached downloads/,
   );
   assert.equal(f.calls.length, before);
 });
@@ -120,7 +125,14 @@ test("selected uncached release prepares once, then later search validates and d
   for (let attempt = 0; attempt < 2; attempt++)
     await assert.rejects(
       plugin.resolveFile!(release, cfg, f.host, signal()),
-      /Preparing.*Search again later/,
+      (error) => {
+        assert(error instanceof Error);
+        assert.match(error.message, /Preparing.*debrid account/);
+        assert.match(error.message, /BookOrbit may show this as an error/);
+        assert.match(error.message, /Search again later to download/);
+        assert.match(error.message, /will not continue automatically/);
+        return true;
+      },
     );
   assert.equal(f.calls.filter((c) => c.endsWith("createtorrent")).length, 1);
   assert(!f.calls.some((c) => c.endsWith("requestdl")));

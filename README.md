@@ -53,13 +53,12 @@ downloading, and backups may retain them. Keep your server and backups private.
 
 ## Preparing a download
 
-With TorBox, Real-Debrid or Debrid-Link, enable the source’s uncached-results
-option to find something to prepare when no ready book is available.
+Leave **Show uncached downloads** off for ready downloads only. With TorBox,
+Real-Debrid or Debrid-Link, turn it on to include books that need preparation.
 
-Results marked **Prepare** may need downloading into your debrid account first.
-**View files**, **Download release**, or an automatic grab can start this step and
-use your provider allowance. Search again later to download the ready book;
-BookOrbit cannot finish preparation automatically.
+1. Choose a result marked **Prepare**. **View files**, **Download release**, or an automatic grab can start preparation and use your provider allowance.
+2. Check progress in your debrid account. BookOrbit may display the preparation message as an error; that message does not mean the transfer failed.
+3. Once the book is ready, search again in BookOrbit and choose its ready result. The request will not continue automatically.
 
 <details>
 <summary>Indexer setup and download limits</summary>
