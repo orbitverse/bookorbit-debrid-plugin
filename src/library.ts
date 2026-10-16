@@ -52,19 +52,49 @@ export const search = Effect.fnUntraced(function* (
     prepareUncached,
   } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
-  const endpoints = configured.length
-    ? configured
-    : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
   const host = yield* Network;
-  const outcomes = yield* Effect.forEach(
-    endpoints,
-    (endpoint) =>
-      searchFeed(endpoint, account.indexerKey, q).pipe(Effect.result),
-    { concurrency: 4 },
+  type Outcome = Result.Result<
+    Effect.Success<ReturnType<typeof searchFeed>>,
+    ReturnType<typeof fail>
+  >;
+  const collected: (Outcome | undefined)[] = [];
+  let collectionExpired = false;
+  const collectionTimeout = () =>
+    fail(
+      "Indexer search timed out before all feeds completed. Retry with fewer indexers.",
+      "timeout",
+    );
+  // Discovery, feed requests and metadata share one stage budget, leaving time for cache access.
+  yield* Effect.gen(function* () {
+    const endpoints = configured.length
+      ? configured
+      : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
+    yield* Effect.forEach(
+      endpoints,
+      (endpoint, index) =>
+        searchFeed(endpoint, account.indexerKey, q).pipe(
+          Effect.result,
+          Effect.map((outcome) => {
+            collected[index] = outcome;
+          }),
+        ),
+      { concurrency: 4, discard: true },
+    );
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: "12 seconds",
+      orElse: () =>
+        Effect.sync(() => {
+          collectionExpired = true;
+          host.logger.warn(collectionTimeout().message);
+        }),
+    }),
   );
+  const outcomes = collected.filter((outcome) => outcome !== undefined);
   const successful = outcomes.filter(Result.isSuccess);
+  const firstFailure = outcomes.find(Result.isFailure)?.failure;
   if (!successful.length)
-    return yield* Effect.fail(outcomes.find(Result.isFailure)!.failure);
+    return yield* Effect.fail(firstFailure ?? collectionTimeout());
   for (const outcome of outcomes)
     if (Result.isFailure(outcome)) host.logger.warn(outcome.failure.message);
   const torrents = new Map<
@@ -86,7 +116,11 @@ export const search = Effect.fnUntraced(function* (
       )
         torrents.set(t.hash, t);
     }
-  if (!torrents.size) return [];
+  if (!torrents.size) {
+    if (firstFailure || collectionExpired)
+      return yield* Effect.fail(firstFailure ?? collectionTimeout());
+    return [];
+  }
   const available = yield* (
     prepareUncached && service.available ? service.available : service.cached
   )([...torrents.keys()], account.debrid.key);

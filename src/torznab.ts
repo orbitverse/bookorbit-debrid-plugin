@@ -189,24 +189,22 @@ export const searchFeed = Effect.fnUntraced(function* (
   const results: Torrent[] = parsed.flatMap((item) =>
     item.hash ? [{ ...item.torrent, hash: item.hash }] : [],
   );
+  const relevant = (torrent: Omit<Torrent, "hash">) =>
+    matches(q.title, torrent.title) &&
+    (!q.author || !torrent.author || matches(q.author, torrent.author)) &&
+    (!q.language ||
+      !torrent.language ||
+      q.language.toLowerCase() === torrent.language.toLowerCase());
   const pending = new Map<string, Omit<Torrent, "hash">[]>();
   for (const item of parsed) {
     const torrent = item.torrent;
-    if (
-      item.hash ||
-      !item.download ||
-      !matches(q.title, torrent.title) ||
-      (q.author && torrent.author && !matches(q.author, torrent.author)) ||
-      (q.language &&
-        torrent.language &&
-        q.language.toLowerCase() !== torrent.language.toLowerCase())
-    )
-      continue;
+    if (item.hash || !item.download || !relevant(torrent)) continue;
     const existing = pending.get(item.download);
     if (existing) existing.push(torrent);
     else if (pending.size < 4) pending.set(item.download, [torrent]);
   }
   const host = yield* Network;
+  let metadataExpired = false;
   yield* Effect.forEach(
     [...pending],
     ([download, torrents]) =>
@@ -225,14 +223,22 @@ export const searchFeed = Effect.fnUntraced(function* (
     { concurrency: 2 },
   ).pipe(
     Effect.timeoutOrElse({
-      duration: "6 seconds",
+      duration: "10 seconds",
       orElse: () =>
         Effect.sync(() => {
+          metadataExpired = true;
           host.logger.warn(
             "Torznab: torrent metadata lookup budget expired; completed results remain available.",
           );
         }),
     }),
   );
+  if (metadataExpired && !results.some(relevant))
+    return yield* Effect.fail(
+      fail(
+        "Torznab: matching torrent metadata lookup timed out. Retry later.",
+        "timeout",
+      ),
+    );
   return results;
 });
