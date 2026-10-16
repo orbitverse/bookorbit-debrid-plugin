@@ -173,12 +173,12 @@ importers:
         specifier: ^4.0.2
         version: 4.0.4
     devDependencies:
+      '@orbitverse/bookorbit-plugin-tools':
+        specifier: git+https://github.com/orbitverse/bookorbit-plugin-tools.git#53750a4b49e19afe1c99e2ce4765b3deed49d511
+        version: https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
-      esbuild:
-        specifier: ^0.28.2
-        version: 0.28.2
       knip:
         specifier: ^6.41.0
         version: 6.41.0
@@ -365,6 +365,12 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
+
+  '@orbitverse/bookorbit-plugin-tools@https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511':
+    resolution: {gitHosted: true, integrity: sha512-+TGO5BGsQZczWkQPQpZRQjKf6WNw/wcVQj85qMk+VFHSntTf8ovRT9qIvCY2XYkxduiFrGJ/Gra1rSXFXGO1dQ==, tarball: https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511}
+    version: 0.1.0
+    engines: {node: '>=22'}
+    hasBin: true
 
   '@oxc-parser/binding-android-arm-eabi@0.153.0':
     resolution: {integrity: sha512-BcWu25dMwMjHpaDCEidmpAi7rGg1qZoihJeUUH9bD55pVZ0z4Wa5CQgqSTo0R41H81oozisQKW3WqvAN2m77IQ==}
@@ -1010,6 +1016,10 @@ snapshots:
       '@emnapi/runtime': 1.11.2
       '@tybys/wasm-util': 0.10.4
     optional: true
+
+  '@orbitverse/bookorbit-plugin-tools@https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511':
+    dependencies:
+      esbuild: 0.28.2
 
   '@oxc-parser/binding-android-arm-eabi@0.153.0':
     optional: true

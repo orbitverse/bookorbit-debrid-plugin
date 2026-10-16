@@ -12,3 +12,5 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` completely. Con
 - Run `pnpm check` before delivering the single `dist/index.mjs` file. Tests use synthetic accounts and fixture responses. Live acquisition is a separate check.
 - README is for casual users. Keep research and development-history notes out of public documentation.
 - To release, bump `package.json` and merge a passing PR. Actions signs and publishes from the main-only `plugin-signing` environment.
+
+Build and release tooling comes from the exact Git commit pinned in package.json. Keep the signing workflow checkout at the same commit; release tests enforce this. Plugin runtime code stays local.

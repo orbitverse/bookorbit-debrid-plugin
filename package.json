@@ -1,9 +1,9 @@
 {
   "name": "bookorbit-debrid-plugin",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Cached ebook and audiobook downloads for BookOrbit",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "bookorbit-plugin-tools build",
     "typecheck": "tsc --noEmit",
     "lint": "knip",
     "test": "tsx --test test/*.test.ts",
@@ -13,7 +13,9 @@
     "verify": "pnpm build && node verification/run.mjs",
     "verify:budgets": "pnpm build && node verification/budgets.mjs",
     "verify:integrity": "pnpm build && node verification/integrity.mjs",
-    "test:release": "node --test test/release.test.mjs"
+    "test:release": "node --test test/release.test.mjs",
+    "check:release": "bookorbit-plugin-tools check-release",
+    "sign:release": "bookorbit-plugin-tools sign-release"
   },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@12.11.2",
@@ -24,11 +26,11 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
-    "esbuild": "^0.28.2",
     "knip": "^6.41.0",
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "@orbitverse/bookorbit-plugin-tools": "git+https://github.com/orbitverse/bookorbit-plugin-tools.git#53750a4b49e19afe1c99e2ce4765b3deed49d511"
   },
   "private": true
 }
