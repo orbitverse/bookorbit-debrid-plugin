@@ -8,12 +8,12 @@ Only TorBox has been verified with live BookOrbit downloads.
 
 ## Install
 
-1. Build `dist/index.mjs` using the commands below.
+1. Download `index.mjs` from the [latest release](https://github.com/orbitverse/bookorbit-debrid-plugin/releases/latest).
 2. In BookOrbit, open **Settings → Server → Requests → Install a plugin** and upload it.
 3. Add **BookOrbit Debrid** as a source and enter your Prowlarr or Jackett server address.
 4. Add your account details below, save, and click **Test connection**.
 
-To update, build the new version and upload it using **Update plugin**.
+For future updates, use **Check for updates** or enable **Install signed updates automatically**.
 
 ## Settings
 
