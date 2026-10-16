@@ -3,6 +3,7 @@ import type { File, PluginReleaseQuery } from "./model.js";
 const ebook = new Set(["epub", "pdf", "mobi", "azw3", "fb2", "djvu"]);
 const audio = new Set(["m4b", "mp3", "m4a", "flac", "ogg", "opus"]);
 const extension = (name: string) => name.split(".").pop()?.toLowerCase() ?? "";
+export const isAudioFile = (name: string) => audio.has(extension(name));
 const normalize = (s: string) =>
   s
     .normalize("NFKD")
@@ -30,7 +31,7 @@ export function selectFiles(
     return files
       .filter((f) => ebook.has(extension(f.name)) && matches(q.title, f.name))
       .map((f) => ({ files: [f], format: extension(f.name) }));
-  const tracks = files.filter((f) => audio.has(extension(f.name)));
+  const tracks = files.filter((f) => isAudioFile(f.name));
   if (!tracks.length) return [];
   if (tracks.length === 1) {
     const name = tracks[0].name.split(/[\\/]/).pop()!;

@@ -1,0 +1,351 @@
+[
+  {
+    "id": "ebook-formats",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub", "Pride and Prejudice.pdf"],
+    "expected": ["epub", "pdf"]
+  },
+  {
+    "id": "audio-single",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice.m4b"],
+    "expected": ["m4b"]
+  },
+  {
+    "id": "audio-tracks",
+    "media": "audiobook",
+    "files": [
+      "Pride and Prejudice/01.mp3",
+      "Pride and Prejudice/02.mp3",
+      "Pride and Prejudice/03.mp3"
+    ],
+    "expected": ["zip"]
+  },
+  {
+    "id": "chapter-only",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice/01.mp3"],
+    "expected": []
+  },
+  {
+    "id": "track-gap",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice/01.mp3", "Pride and Prejudice/03.mp3"],
+    "expected": []
+  },
+  {
+    "id": "ambiguous-archive",
+    "media": "audiobook",
+    "files": ["Pride and Prejudice.zip"],
+    "expected": []
+  },
+  {
+    "id": "unrelated-book",
+    "media": "ebook",
+    "files": ["Another Book.epub"],
+    "expected": []
+  },
+  {
+    "id": "cache-miss",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": [],
+    "behavior": "miss"
+  },
+  {
+    "id": "partial-indexer",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "partial"
+  },
+  {
+    "id": "cache-eviction",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "evicted",
+    "resolve": "blocked"
+  },
+  {
+    "id": "key-bearing-link",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "unsafe",
+    "resolve": "blocked"
+  },
+  {
+    "id": "encoded-key-link",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "encoded",
+    "resolve": "blocked"
+  },
+  {
+    "id": "cancelled-search",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": [],
+    "behavior": "cancel",
+    "search": "blocked"
+  },
+  {
+    "id": "match-pride-exact",
+    "work": "pride-prejudice",
+    "metricGroup": "bookIdentity",
+    "hash": "1111111111111111111111111111111111111111",
+    "query": {
+      "title": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "language": "en"
+    },
+    "feed": {
+      "title": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "language": "en"
+    },
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub", "Pride and Prejudice.pdf"],
+    "expected": ["epub", "pdf"],
+    "expectedFiles": [["Pride and Prejudice.epub"], ["Pride and Prejudice.pdf"]]
+  },
+  {
+    "id": "match-pride-wrong-author",
+    "work": "pride-prejudice",
+    "metricGroup": "metadataPassthrough",
+    "hash": "1111111111111111111111111111111111111111",
+    "query": {
+      "title": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "language": "en"
+    },
+    "feed": {
+      "title": "Pride and Prejudice",
+      "author": "Charlotte Bronte",
+      "language": "en"
+    },
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "expectedFiles": [["Pride and Prejudice.epub"]]
+  },
+  {
+    "id": "match-pride-wrong-language",
+    "work": "pride-prejudice",
+    "metricGroup": "metadataPassthrough",
+    "hash": "1111111111111111111111111111111111111111",
+    "query": {
+      "title": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "language": "en"
+    },
+    "feed": {
+      "title": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "language": "fr"
+    },
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "expectedFiles": [["Pride and Prejudice.epub"]]
+  },
+  {
+    "id": "match-alice-punctuation",
+    "work": "alice-wonderland",
+    "metricGroup": "bookIdentity",
+    "hash": "2222222222222222222222222222222222222222",
+    "query": {
+      "title": "Alice in Wonderland",
+      "author": "Lewis Carroll",
+      "language": "en"
+    },
+    "feed": {
+      "title": "ALICE: IN WONDERLAND",
+      "author": "Lewis Carroll",
+      "language": "en"
+    },
+    "media": "ebook",
+    "files": ["ALICE_in_WONDERLAND.epub"],
+    "expected": ["epub"],
+    "expectedFiles": [["ALICE_in_WONDERLAND.epub"]]
+  },
+  {
+    "id": "match-alice-other-title",
+    "work": "alice-wonderland",
+    "metricGroup": "bookIdentity",
+    "hash": "2222222222222222222222222222222222222222",
+    "query": {
+      "title": "Alice in Wonderland",
+      "author": "Lewis Carroll",
+      "language": "en"
+    },
+    "feed": {
+      "title": "Through the Looking Glass",
+      "author": "Lewis Carroll",
+      "language": "en"
+    },
+    "media": "ebook",
+    "files": ["Through the Looking Glass.epub"],
+    "expected": [],
+    "expectedFiles": []
+  },
+  {
+    "id": "match-alice-unknown-metadata",
+    "work": "alice-wonderland",
+    "metricGroup": "unknownMetadata",
+    "hash": "2222222222222222222222222222222222222222",
+    "query": {
+      "title": "Alice in Wonderland",
+      "author": "Lewis Carroll",
+      "language": "en"
+    },
+    "feed": {
+      "title": "Alice in Wonderland",
+      "author": null,
+      "language": null
+    },
+    "media": "ebook",
+    "files": ["Alice in Wonderland - Illustrated Edition.epub"],
+    "expected": ["epub"],
+    "expectedFiles": [["Alice in Wonderland - Illustrated Edition.epub"]]
+  },
+  {
+    "id": "match-39-numeric-title",
+    "work": "39-steps",
+    "metricGroup": "bookIdentity",
+    "hash": "3333333333333333333333333333333333333333",
+    "query": {
+      "title": "The 39 Steps",
+      "author": "John Buchan",
+      "language": "en"
+    },
+    "feed": {
+      "title": "The 39 Steps",
+      "author": "John Buchan",
+      "language": "en"
+    },
+    "media": "audiobook",
+    "files": ["The 39 Steps.m4b"],
+    "expected": ["m4b"],
+    "expectedFiles": [["The 39 Steps.m4b"]]
+  },
+  {
+    "id": "match-39-chapter-only",
+    "work": "39-steps",
+    "metricGroup": "mediaCompleteness",
+    "hash": "3333333333333333333333333333333333333333",
+    "query": {
+      "title": "The 39 Steps",
+      "author": "John Buchan",
+      "language": "en"
+    },
+    "feed": {
+      "title": "The 39 Steps",
+      "author": "John Buchan",
+      "language": "en"
+    },
+    "media": "audiobook",
+    "files": ["The 39 Steps - Chapter 01.mp3"],
+    "expected": [],
+    "expectedFiles": []
+  },
+  {
+    "id": "match-39-conflicting-author",
+    "work": "39-steps",
+    "metricGroup": "metadataPassthrough",
+    "hash": "3333333333333333333333333333333333333333",
+    "query": {
+      "title": "The 39 Steps",
+      "author": "John Buchan",
+      "language": "en"
+    },
+    "feed": {
+      "title": "The 39 Steps",
+      "author": "Another Writer",
+      "language": "en"
+    },
+    "media": "audiobook",
+    "files": ["The 39 Steps.m4b"],
+    "expected": ["m4b"],
+    "expectedFiles": [["The 39 Steps.m4b"]]
+  },
+  {
+    "id": "match-carol-complete-tracks",
+    "work": "christmas-carol",
+    "metricGroup": "bookIdentity",
+    "hash": "4444444444444444444444444444444444444444",
+    "query": {
+      "title": "A Christmas Carol",
+      "author": "Charles Dickens",
+      "language": "en"
+    },
+    "feed": {
+      "title": "A Christmas Carol",
+      "author": "Charles Dickens",
+      "language": "en"
+    },
+    "media": "audiobook",
+    "files": [
+      "A Christmas Carol/01.mp3",
+      "A Christmas Carol/02.mp3",
+      "A Christmas Carol/03.mp3"
+    ],
+    "expected": ["zip"],
+    "expectedFiles": [
+      [
+        "A Christmas Carol/01.mp3",
+        "A Christmas Carol/02.mp3",
+        "A Christmas Carol/03.mp3"
+      ]
+    ]
+  },
+  {
+    "id": "match-carol-wrong-language",
+    "work": "christmas-carol",
+    "metricGroup": "metadataPassthrough",
+    "hash": "4444444444444444444444444444444444444444",
+    "query": {
+      "title": "A Christmas Carol",
+      "author": "Charles Dickens",
+      "language": "en"
+    },
+    "feed": {
+      "title": "A Christmas Carol",
+      "author": "Charles Dickens",
+      "language": "fr"
+    },
+    "media": "audiobook",
+    "files": ["A Christmas Carol.m4b"],
+    "expected": ["m4b"],
+    "expectedFiles": [["A Christmas Carol.m4b"]]
+  },
+  {
+    "id": "match-carol-track-gap",
+    "work": "christmas-carol",
+    "metricGroup": "mediaCompleteness",
+    "hash": "4444444444444444444444444444444444444444",
+    "query": {
+      "title": "A Christmas Carol",
+      "author": "Charles Dickens",
+      "language": "en"
+    },
+    "feed": {
+      "title": "A Christmas Carol",
+      "author": "Charles Dickens",
+      "language": "en"
+    },
+    "media": "audiobook",
+    "files": ["A Christmas Carol/01.mp3", "A Christmas Carol/03.mp3"],
+    "expected": [],
+    "expectedFiles": []
+  },
+  {
+    "id": "native-private-key-link",
+    "media": "ebook",
+    "files": ["Pride and Prejudice.epub"],
+    "expected": ["epub"],
+    "behavior": "native"
+  }
+]

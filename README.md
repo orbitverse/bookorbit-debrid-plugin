@@ -1,17 +1,30 @@
 # BookOrbit Debrid
 
-Find cached ebooks and audiobooks through your indexers and debrid account.
-BookOrbit downloads the files directly; you do not need a local torrent client.
+Find ebooks and audiobooks through Prowlarr or Jackett and your debrid account.
+BookOrbit downloads the files directly from your provider.
 
-**Early preview:** TorBox is the first supported provider. Automated checks use
-fixtures; live downloads have not yet been verified.
+Use TorBox, EasyDebrid, Real-Debrid or Debrid-Link.
 
-## Setup
+## Install
 
-1. Build `dist/index.mjs` below, then upload it in BookOrbit under **Settings → Server → Requests → Install a plugin**.
-2. Add **BookOrbit Debrid** as a source. Set **Base URL** to your Prowlarr or Jackett server, such as `http://prowlarr:9696`. Enable **Allow private addresses** for a local server.
-3. In **Torznab API paths**, enter the paths from your public book indexers, separated by commas. For Prowlarr, these look like `/1/api,/2/api`. For Jackett, copy the path from each indexer's Torznab feed URL. Omit the query string.
-4. Paste this JSON into **API key**, replace the placeholders, save, and run **Test connection**:
+1. Download `index.mjs` from the [latest release](https://github.com/orbitverse/bookorbit-debrid-plugin/releases/latest).
+2. In BookOrbit, open **Settings → Server → Requests → Install a plugin** and upload it.
+3. Add **BookOrbit Debrid** as a source and enter your Prowlarr or Jackett server address.
+4. Add your account details below, save, and click **Test connection**.
+
+For future updates, use **Check for updates** or enable **Install signed updates automatically**.
+
+## Settings
+
+| Setting                 | What to choose                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| Base URL                | Your Prowlarr or Jackett address, such as `http://prowlarr:9696`.                            |
+| Allow private addresses | Enable for a server on your local network.                                                   |
+| Torznab API paths       | Leave blank for automatic public book indexer discovery in Prowlarr. Jackett setup is below. |
+
+## Accounts
+
+Paste this into the source’s **API key** field and replace the placeholders:
 
 ```json
 {
@@ -23,17 +36,50 @@ fixtures; live downloads have not yet been verified.
 }
 ```
 
-BookOrbit stores these credentials encrypted. Your server needs
+Choose one provider:
+
+| `provider`   | What to put in `key`          | Ready downloads                                            |
+| ------------ | ----------------------------- | ---------------------------------------------------------- |
+| `torbox`     | TorBox API key                | Cached ebooks and audiobooks, including multi-track ZIPs.  |
+| `easydebrid` | EasyDebrid OAuth access token | Cached ebooks and single-file audiobooks.                  |
+| `realdebrid` | Real-Debrid API token         | Ebooks and single-file audiobooks already in your account. |
+| `debridlink` | Debrid-Link API/OAuth token   | Ebooks and single-file audiobooks already in your account. |
+
+BookOrbit encrypts account details. Your server needs
 `BOOK_REQUEST_ENCRYPTION_KEY` configured.
 
-Searches show cached files only. Selecting a result rechecks its availability;
-if it has left the cache, search again. Uncached torrents are never queued.
-Your provider's account limits still apply.
+TorBox download links contain your API key. BookOrbit stores these links while
+downloading, and backups may retain them. Keep your server and backups private.
 
-Ebooks retain their separate formats. Audiobooks can be a single audio file or
-a numbered track set in one matching folder, delivered together as ZIP.
-Ambiguous archives and mixed book collections are omitted. Use public indexers
-that return an infohash or magnet; private and hashless results are not supported.
+## Preparing a download
+
+Leave **Show uncached downloads** off for ready downloads only. With TorBox,
+Real-Debrid or Debrid-Link, turn it on to include books that need preparation.
+
+1. Choose a result marked **Prepare**. **View files**, **Download release**, or an automatic grab can start preparation and use your provider allowance.
+2. Check progress in your debrid account. BookOrbit may display the preparation message as an error; that message does not mean the transfer failed.
+3. Once the book is ready, search again in BookOrbit and choose its ready result. The request will not continue automatically.
+
+<details>
+<summary>Indexer setup and download limits</summary>
+
+For Jackett, enter the paths from your indexers’ Torznab URLs in **Torznab API
+paths**, separated by commas, without query strings. For specific Prowlarr
+indexers, enter paths such as `/1/api,/2/api`.
+
+Use public indexers that return an infohash or magnet. Private and hashless
+results are not supported. Real-Debrid and Debrid-Link check your account rather
+than the shared cache; accounts with more than 100 entries are not supported.
+
+Preparation does not guarantee a supported book. Real-Debrid may ask you to
+select files on its website when several book files are available.
+
+Separate ebook formats are kept. TorBox can deliver a numbered audiobook track
+set together as a ZIP; ambiguous archives and mixed book collections are skipped.
+If an imported audiobook has incorrect timing or missing chapters, scan its
+library once.
+
+</details>
 
 ## Build
 
@@ -44,6 +90,6 @@ pnpm install
 pnpm check
 ```
 
-Upload **`dist/index.mjs`**. `pnpm build` rebuilds it without running checks.
+The uploadable file is `dist/index.mjs`. Use `pnpm build` to rebuild without checks.
 
 Copyright © 2026 campfireshuffle. AGPL-3.0 licensed. Vendored BookOrbit types retain their upstream notice in `vendor/`.

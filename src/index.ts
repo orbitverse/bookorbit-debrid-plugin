@@ -1,4 +1,5 @@
 import packageInfo from "../package.json" with { type: "json" };
+import releaseConfig from "../release.json" with { type: "json" };
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -40,8 +41,12 @@ const run = async <A>(
 export default {
   apiVersion: 1,
   version: packageInfo.version,
-  type: "bookorbit-debrid-plugin",
+  type: releaseConfig.type,
   label: "BookOrbit Debrid",
+  update: {
+    manifestUrl: `https://github.com/${releaseConfig.repository}/releases/latest/download/${releaseConfig.type}.json`,
+    ed25519PublicKey: releaseConfig.publicKey,
+  },
   requiresCredential: true,
   credentialKind: "apiKey",
   mediaKinds: ["ebook", "audiobook"],
@@ -53,11 +58,18 @@ export default {
     "Your Prowlarr or Jackett server address. For a local server, enable Allow private addresses. Paste the account JSON from the README into API key.",
   settingsFields: [
     {
+      key: "prepareUncached",
+      type: "boolean",
+      label: "Show uncached downloads",
+      default: false,
+      hint: "TorBox, Real-Debrid and Debrid-Link. View files, Download or automatic grabs may start preparation and use your provider allowance. BookOrbit may show this as an error. Search again later to download; requests do not resume automatically.",
+    },
+    {
       key: "indexerPaths",
       type: "string",
       label: "Torznab API paths",
-      default: "/1/api",
-      hint: "Copy paths from your chosen public book indexers, for example /1/api,/2/api in Prowlarr. Use only the path; keep API keys in the encrypted JSON.",
+      default: "",
+      hint: "Leave blank to find public book indexers in Prowlarr automatically. For Jackett or a custom selection, enter paths such as /1/api,/2/api without query strings.",
     },
   ],
   search: (q, cfg, host, signal) => run(Library.search(q, cfg), host, signal),

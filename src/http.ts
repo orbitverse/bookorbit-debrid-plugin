@@ -67,7 +67,7 @@ export const request = Effect.fnUntraced(function* (
       : attempt
   ).pipe(
     Effect.timeoutOrElse({
-      duration: "4 seconds",
+      duration: "12 seconds",
       orElse: () =>
         Effect.fail(fail(`${label}: request timed out.`, "timeout")),
     }),

@@ -28,8 +28,15 @@ export const Size = Schema.Int.check(
 );
 export const File = Schema.Struct({ name: Schema.NonEmptyString, size: Size });
 export type File = typeof File.Type;
+export const Provider = Schema.Literals([
+  "torbox",
+  "easydebrid",
+  "realdebrid",
+  "debridlink",
+]);
+export type Provider = typeof Provider.Type;
 export const Selection = Schema.Struct({
-  provider: Schema.Literal("torbox"),
+  provider: Provider,
   hash: Hash,
   title: Schema.NonEmptyString,
   media: Schema.Literals(["ebook", "audiobook"]),
@@ -37,11 +44,19 @@ export const Selection = Schema.Struct({
   format: Schema.NonEmptyString,
 });
 export type Selection = typeof Selection.Type;
+export const Preparation = Schema.Struct({
+  action: Schema.Literal("prepare"),
+  provider: Provider,
+  hash: Hash,
+  title: Schema.NonEmptyString,
+  media: Schema.Literals(["ebook", "audiobook"]),
+});
+export const Release = Schema.Union([Selection, Preparation]);
 
 const Account = Schema.Struct({
   indexerKey: Schema.NonEmptyString,
   debrid: Schema.Struct({
-    provider: Schema.Literal("torbox"),
+    provider: Provider,
     key: Schema.NonEmptyString,
   }),
 });
@@ -54,7 +69,7 @@ export const config = (cfg: PluginIndexerConfig) => {
     if (!account.indexerKey.trim() || !account.debrid.key.trim()) throw Error();
   } catch {
     throw fail(
-      'Paste account JSON with indexerKey and debrid: { provider: "torbox", key: "..." } into API key.',
+      'Paste the account JSON from the README into API key, with indexerKey and debrid: { provider: "torbox", key: "..." }. Supported providers: torbox, easydebrid, realdebrid, debridlink.',
       "unauthorized",
     );
   }
@@ -74,7 +89,7 @@ export const config = (cfg: PluginIndexerConfig) => {
       "Use your Prowlarr or Jackett HTTP(S) address without credentials or a query.",
     );
   }
-  const raw = cfg.settings?.indexerPaths ?? "/1/api";
+  const raw = cfg.settings?.indexerPaths ?? "";
   if (typeof raw !== "string")
     throw fail("Indexer paths must be a comma-separated list.");
   const paths = [
@@ -85,7 +100,7 @@ export const config = (cfg: PluginIndexerConfig) => {
         .filter(Boolean),
     ),
   ];
-  if (!paths.length || paths.length > 8)
+  if (paths.length > 8)
     throw fail("Choose between one and eight Torznab API paths.");
   const endpoints = paths.map((path) => {
     const url = new URL(path, base);
@@ -103,5 +118,8 @@ export const config = (cfg: PluginIndexerConfig) => {
       );
     return url.href;
   });
-  return { account, endpoints };
+  const prepareUncached = cfg.settings?.prepareUncached ?? false;
+  if (typeof prepareUncached !== "boolean")
+    throw fail("Show uncached torrents must be enabled or disabled.");
+  return { account, endpoints, baseUrl: base.href, prepareUncached };
 };
