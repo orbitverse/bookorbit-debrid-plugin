@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Option from "effect/Option";
+import * as Clock from "effect/Clock";
 import { File, Hash, Size, fail, type Selection } from "./model.js";
 import { decode, json, request, Network } from "./http.js";
 
@@ -201,6 +202,9 @@ export const available = Effect.fnUntraced(function* (
 
 // Only one preparation runs per loaded module; other workers still reconcile through TorBox.
 const preparation = Semaphore.makeUnsafe(1);
+// Process-local only: restarts and other servers do not share these attempts.
+// TorBox list updates can lag 600 seconds; retain even failed attempts conservatively.
+const preparationAttempts = new Map<string, number>();
 export const prepare = Effect.fnUntraced(function* (hash: string, key: string) {
   yield* decode(Hash, hash, "TorBox preparation");
   const result = yield* preparation.withPermitsIfAvailable(1)(
@@ -221,6 +225,33 @@ export const prepare = Effect.fnUntraced(function* (hash: string, key: string) {
             "Your TorBox account has too many entries to safely check for an existing preparation. Check it in TorBox first.",
           ),
         );
+      const attempt = yield* Effect.tryPromise({
+        try: async () =>
+          Buffer.from(
+            await crypto.subtle.digest(
+              "SHA-256",
+              new TextEncoder().encode(JSON.stringify([key, hash])),
+            ),
+          ).toString("hex"),
+        catch: () =>
+          fail("Could not identify the TorBox preparation. Try again."),
+      });
+      const now = yield* Clock.currentTimeMillis;
+      for (const [id, expires] of preparationAttempts)
+        if (expires <= now) preparationAttempts.delete(id);
+      if (preparationAttempts.has(attempt))
+        return yield* Effect.fail(
+          fail(
+            "A recent TorBox preparation may still be processing. Wait at least ten minutes, then check TorBox before trying again.",
+          ),
+        );
+      if (preparationAttempts.size >= 100)
+        return yield* Effect.fail(
+          fail(
+            "Too many recent TorBox preparations. Wait ten minutes, then check TorBox before trying again.",
+          ),
+        );
+      preparationAttempts.set(attempt, now + 600_000);
       yield* create(hash, key, false).pipe(
         Effect.catch((error) =>
           error.kind === "unreachable" || error.kind === "timeout"
