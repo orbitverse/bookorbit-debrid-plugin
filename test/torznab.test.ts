@@ -280,7 +280,18 @@ test("metadata batch expiry retains direct and completed results beside a stalle
         ? new Promise(() => {})
         : new Response(torrent()),
   );
-  const result = await f.run(AbortSignal.timeout(8000));
+  const empty = fixture(
+    item("/prowlarr/3/download?link=stalled"),
+    async () => new Promise(() => {}),
+  );
+  const [result] = await Promise.all([
+    f.run(AbortSignal.timeout(12000)),
+    assert.rejects(empty.run(AbortSignal.timeout(12000)), (error) => {
+      assert(error instanceof Error && "kind" in error);
+      assert.equal(error.kind, "timeout");
+      return true;
+    }),
+  ]);
   assert.deepEqual(
     result.map((item) => item.hash),
     [hash, expected],
