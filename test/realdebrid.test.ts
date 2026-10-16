@@ -144,6 +144,49 @@ test("Real-Debrid rejects truncated inventory and excessive matching detail fano
   }
 });
 
+test("Real-Debrid rejects under-cap inventory count mismatches before details or preparation", async () => {
+  for (const options of [
+    { total: "2", jobs: () => [torrent({ hash: other })] },
+    { total: "1", jobs: () => [] },
+  ]) {
+    const cached = fixture(options),
+      preparation = fixture(options);
+    await assert.rejects(
+      cached.run(RD.cached([hash], key)),
+      /listing is incomplete/,
+    );
+    await assert.rejects(
+      preparation.run(RD.prepare(hash, key, context)),
+      /listing is incomplete/,
+    );
+    for (const f of [cached, preparation])
+      assert.deepEqual(
+        f.calls.map((call) => call.route),
+        ["torrents"],
+      );
+  }
+});
+
+test("Real-Debrid accepts exact inventory counts for empty and ready accounts", async () => {
+  const empty = fixture({ total: "0", jobs: () => [] });
+  assert.deepEqual(await empty.run(RD.cached([hash], key)), []);
+  assert.deepEqual(await empty.run(RD.prepare(hash, key, context)), {
+    status: "ready",
+  });
+  assert.deepEqual(
+    mutations(empty.calls).map((call) => call.route),
+    ["torrents/addMagnet"],
+  );
+  const ready = fixture({ total: "1" });
+  assert.deepEqual(await ready.run(RD.cached([hash], key)), [
+    { hash, name: "Book", files: selection.files },
+  ]);
+  assert.deepEqual(await ready.run(RD.prepare(hash, key, context)), {
+    status: "ready",
+  });
+  assert.deepEqual(mutations(ready.calls), []);
+});
+
 test("Real-Debrid validates detail hash and never mispairs multiple selected files or links", async () => {
   const mismatch = fixture({ details: () => torrent({ hash: other }) });
   await assert.rejects(
