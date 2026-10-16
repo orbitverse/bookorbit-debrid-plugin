@@ -87,7 +87,7 @@ const inventory = Effect.fnUntraced(function* (
     (total !== null &&
       (!/^\d+$/.test(total) ||
         Number(total) > 100 ||
-        Number(total) < listed.length)) ||
+        Number(total) !== listed.length)) ||
     (total === null && listed.length === 100)
   )
     return yield* Effect.fail(
