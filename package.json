@@ -1,6 +1,6 @@
 {
   "name": "bookorbit-debrid-plugin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cached ebook and audiobook downloads for BookOrbit",
   "scripts": {
     "build": "node scripts/build.mjs",

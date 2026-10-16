@@ -136,7 +136,7 @@ export const search = Effect.fnUntraced(function* (
       if (guid.length > 4000) continue;
       releases.push({
         guid,
-        title: `${q.title} · Prepare in ${service.label} (check availability) · ${t.indexer}`,
+        title: `${q.title} · Prepare in ${service.label} (download later) · ${t.indexer}`,
         bookTitle: q.title,
         author: t.author,
         language: t.language,
@@ -170,7 +170,7 @@ export const resolveFile = Effect.fnUntraced(function* (
     if (!prepareUncached || !service.prepare)
       return yield* Effect.fail(
         fail(
-          "Enable Show uncached torrents and search again to prepare this release.",
+          "Enable Show uncached downloads and search again to prepare this release.",
         ),
       );
     const result = yield* service.prepare(selection.hash, account.debrid.key, {
@@ -181,7 +181,7 @@ export const resolveFile = Effect.fnUntraced(function* (
       fail(
         result.status === "ready"
           ? "This release is ready in your debrid account. Search again to select a verified file and download it."
-          : "Preparing this release in your debrid account. Search again later, then select a ready file. BookOrbit will not finish this request automatically.",
+          : "Preparing this release in your debrid account. BookOrbit may show this as an error. Search again later to download; this request will not continue automatically.",
       ),
     );
   }
