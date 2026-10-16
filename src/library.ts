@@ -12,7 +12,7 @@ import {
 } from "./model.js";
 import type { PluginIndexerConfig } from "../vendor/bookorbit-plugin-api.js";
 import { Network, decode } from "./http.js";
-import { discover, searchFeed } from "./torznab.js";
+import { discover, searchFeeds } from "./torznab.js";
 import { provider } from "./providers.js";
 import { matches, selectFiles, safeFileName } from "./books.js";
 
@@ -53,8 +53,9 @@ export const search = Effect.fnUntraced(function* (
   } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
   const host = yield* Network;
+  const searchIndexer = searchFeeds(account.indexerKey, q);
   type Outcome = Result.Result<
-    Effect.Success<ReturnType<typeof searchFeed>>,
+    Effect.Success<ReturnType<typeof searchIndexer>>,
     ReturnType<typeof fail>
   >;
   const collected: (Outcome | undefined)[] = [];
@@ -72,7 +73,7 @@ export const search = Effect.fnUntraced(function* (
     yield* Effect.forEach(
       endpoints,
       (endpoint, index) =>
-        searchFeed(endpoint, account.indexerKey, q).pipe(
+        searchIndexer(endpoint).pipe(
           Effect.result,
           Effect.map((outcome) => {
             collected[index] = outcome;

@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { matches } from "./books.js";
-import { magnetHash, metadataHash } from "./torrent-metadata.js";
+import { magnetHash, metadataLookup } from "./torrent-metadata.js";
 import { fail, type PluginReleaseQuery } from "./model.js";
 import { decode, json, request, Network } from "./http.js";
 
@@ -93,10 +93,11 @@ type Torrent = {
   language?: string;
   indexer: string;
 };
-export const searchFeed = Effect.fnUntraced(function* (
+const searchFeed = Effect.fnUntraced(function* (
   endpoint: string,
   key: string,
   q: PluginReleaseQuery,
+  resolveMetadata: ReturnType<typeof metadataLookup>,
 ) {
   const url = new URL(endpoint);
   url.search = new URLSearchParams({
@@ -208,7 +209,7 @@ export const searchFeed = Effect.fnUntraced(function* (
   yield* Effect.forEach(
     [...pending],
     ([download, torrents]) =>
-      metadataHash(download, endpoint, key).pipe(
+      resolveMetadata(download, endpoint).pipe(
         Effect.result,
         Effect.map((result) => {
           if (Result.isSuccess(result))
@@ -242,3 +243,8 @@ export const searchFeed = Effect.fnUntraced(function* (
     );
   return results;
 });
+
+export function searchFeeds(key: string, q: PluginReleaseQuery) {
+  const resolveMetadata = metadataLookup(key);
+  return (endpoint: string) => searchFeed(endpoint, key, q, resolveMetadata);
+}
