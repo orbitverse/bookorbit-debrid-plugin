@@ -1,8 +1,11 @@
 import { load } from "cheerio/slim";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Result from "effect/Result";
+import { matches } from "./books.js";
+import { magnetHash, metadataHash } from "./torrent-metadata.js";
 import { fail, type PluginReleaseQuery } from "./model.js";
-import { decode, json, request } from "./http.js";
+import { decode, json, request, Network } from "./http.js";
 
 interface Category {
   readonly id: number;
@@ -109,7 +112,7 @@ export const searchFeed = Effect.fnUntraced(function* (
     try: () => response.text(),
     catch: () => fail("Could not read Torznab results."),
   });
-  return yield* Effect.try({
+  const parsed = yield* Effect.try({
     try: () => {
       const $ = load(body, { xmlMode: true });
       if ($("error").length)
@@ -122,7 +125,11 @@ export const searchFeed = Effect.fnUntraced(function* (
         );
       const indexer =
         $("channel > title").first().text().trim().slice(0, 100) || "Torznab";
-      const results: Torrent[] = [];
+      const results: {
+        torrent: Omit<Torrent, "hash">;
+        hash?: string;
+        download?: string;
+      }[] = [];
       $("item")
         .slice(0, 50)
         .each((_, node) => {
@@ -133,31 +140,43 @@ export const searchFeed = Effect.fnUntraced(function* (
               .filter((_, el) => $(el).attr("name") === name)
               .first()
               .attr("value");
-          const privateTracker =
-            attr("private") ?? item.find("indexer").attr("type");
-          if (["1", "true", "private"].includes(privateTracker ?? "")) return;
-          let hash = attr("infohash")?.toLowerCase();
-          if (!hash) {
-            const magnet =
-              attr("magneturl") ??
-              item.find("enclosure").attr("url") ??
-              item.find("link").text();
-            if (magnet.startsWith("magnet:?"))
-              hash = new URL(magnet).searchParams
-                .getAll("xt")
-                .map((s) =>
-                  s.match(/^urn:btih:([a-f0-9]{40})$/i)?.[1].toLowerCase(),
-                )
-                .find(Boolean);
-          }
+          if (
+            [attr("private"), item.find("indexer").attr("type")].some((value) =>
+              ["1", "true", "private"].includes(
+                value?.trim().toLowerCase() ?? "",
+              ),
+            )
+          )
+            return;
+          const links = [
+            attr("magneturl"),
+            item.find("enclosure").attr("url"),
+            item.find("link").text(),
+          ].filter((value): value is string => Boolean(value));
+          const rawHash = attr("infohash")?.toLowerCase();
+          const hash =
+            rawHash && /^[a-f0-9]{40}$/.test(rawHash)
+              ? rawHash
+              : links.map(magnetHash).find(Boolean);
           const title = item.find("title").first().text().trim().slice(0, 500);
-          if (hash && /^[a-f0-9]{40}$/.test(hash) && title)
+          if (title)
             results.push({
               hash,
-              title,
-              author: attr("author"),
-              language: attr("language"),
-              indexer,
+              download: links.find((link) => {
+                try {
+                  return (
+                    new URL(link, endpoint).origin === new URL(endpoint).origin
+                  );
+                } catch {
+                  return false;
+                }
+              }),
+              torrent: {
+                title,
+                author: attr("author"),
+                language: attr("language"),
+                indexer,
+              },
             });
         });
       return results;
@@ -167,4 +186,53 @@ export const searchFeed = Effect.fnUntraced(function* (
         ? (error as ReturnType<typeof fail>)
         : fail("Could not parse Torznab results."),
   });
+  const results: Torrent[] = parsed.flatMap((item) =>
+    item.hash ? [{ ...item.torrent, hash: item.hash }] : [],
+  );
+  const pending = new Map<string, Omit<Torrent, "hash">[]>();
+  for (const item of parsed) {
+    const torrent = item.torrent;
+    if (
+      item.hash ||
+      !item.download ||
+      !matches(q.title, torrent.title) ||
+      (q.author && torrent.author && !matches(q.author, torrent.author)) ||
+      (q.language &&
+        torrent.language &&
+        q.language.toLowerCase() !== torrent.language.toLowerCase())
+    )
+      continue;
+    const existing = pending.get(item.download);
+    if (existing) existing.push(torrent);
+    else if (pending.size < 4) pending.set(item.download, [torrent]);
+  }
+  const host = yield* Network;
+  yield* Effect.forEach(
+    [...pending],
+    ([download, torrents]) =>
+      metadataHash(download, endpoint, key).pipe(
+        Effect.result,
+        Effect.map((result) => {
+          if (Result.isSuccess(result))
+            for (const torrent of torrents)
+              results.push({ ...torrent, hash: result.success });
+          else
+            host.logger.warn(
+              "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.",
+            );
+        }),
+      ),
+    { concurrency: 2 },
+  ).pipe(
+    Effect.timeoutOrElse({
+      duration: "6 seconds",
+      orElse: () =>
+        Effect.sync(() => {
+          host.logger.warn(
+            "Torznab: torrent metadata lookup budget expired; completed results remain available.",
+          );
+        }),
+    }),
+  );
+  return results;
 });
