@@ -53,6 +53,7 @@ export const search = Effect.fnUntraced(function* (
   } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
   const host = yield* Network;
+  const title = host.buildSearchText({ ...q, author: null });
   const searchIndexer = searchFeeds(account.indexerKey, q);
   type Outcome = Result.Result<
     Effect.Success<ReturnType<typeof searchIndexer>>,
@@ -106,15 +107,7 @@ export const search = Effect.fnUntraced(function* (
   for (let i = 0; i < 50; i++)
     for (const outcome of successful) {
       const t = outcome.success[i];
-      if (
-        t &&
-        matches(q.title, t.title) &&
-        (!q.author || !t.author || matches(q.author, t.author)) &&
-        (!q.language ||
-          !t.language ||
-          q.language.toLowerCase() === t.language.toLowerCase()) &&
-        torrents.size < 100
-      )
+      if (t && matches(title, t.title) && torrents.size < 100)
         torrents.set(t.hash, t);
     }
   if (!torrents.size) {
@@ -128,12 +121,12 @@ export const search = Effect.fnUntraced(function* (
   const releases: PluginReleaseCandidate[] = [];
   for (const item of available) {
     const t = torrents.get(item.hash)!;
-    for (const selected of selectFiles(item.files, q)) {
+    for (const selected of selectFiles(item.files, { ...q, title })) {
       if (selected.format === "zip" && !service.supportsZip) continue;
       const value: Selection = {
         provider: account.debrid.provider,
         hash: item.hash,
-        title: q.title,
+        title,
         media: q.mediaKind,
         format: selected.format,
         fingerprint: yield* identify(selected.files),
@@ -146,7 +139,6 @@ export const search = Effect.fnUntraced(function* (
       releases.push({
         guid,
         title: `${t.title} · ${selected.format.toUpperCase()} · ${t.indexer} · ${service.label}`,
-        bookTitle: q.title,
         author: t.author,
         language: t.language,
         format: selected.format,
@@ -165,14 +157,13 @@ export const search = Effect.fnUntraced(function* (
         action: "prepare",
         provider: account.debrid.provider,
         hash: t.hash,
-        title: q.title,
+        title,
         media: q.mediaKind,
       } satisfies typeof Preparation.Type);
       if (guid.length > 4000) continue;
       releases.push({
         guid,
-        title: `${q.title} · Prepare in ${service.label} (download later) · ${t.indexer}`,
-        bookTitle: q.title,
+        title: `${t.title} · Prepare in ${service.label} (download later) · ${t.indexer}`,
         author: t.author,
         language: t.language,
         sizeBytes: null,

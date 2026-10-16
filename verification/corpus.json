@@ -114,7 +114,7 @@
   {
     "id": "match-pride-wrong-author",
     "work": "pride-prejudice",
-    "metricGroup": "metadataFiltering",
+    "metricGroup": "metadataPassthrough",
     "hash": "1111111111111111111111111111111111111111",
     "query": {
       "title": "Pride and Prejudice",
@@ -128,13 +128,13 @@
     },
     "media": "ebook",
     "files": ["Pride and Prejudice.epub"],
-    "expected": [],
-    "expectedFiles": []
+    "expected": ["epub"],
+    "expectedFiles": [["Pride and Prejudice.epub"]]
   },
   {
     "id": "match-pride-wrong-language",
     "work": "pride-prejudice",
-    "metricGroup": "metadataFiltering",
+    "metricGroup": "metadataPassthrough",
     "hash": "1111111111111111111111111111111111111111",
     "query": {
       "title": "Pride and Prejudice",
@@ -148,8 +148,8 @@
     },
     "media": "ebook",
     "files": ["Pride and Prejudice.epub"],
-    "expected": [],
-    "expectedFiles": []
+    "expected": ["epub"],
+    "expectedFiles": [["Pride and Prejudice.epub"]]
   },
   {
     "id": "match-alice-punctuation",
@@ -254,7 +254,7 @@
   {
     "id": "match-39-conflicting-author",
     "work": "39-steps",
-    "metricGroup": "metadataFiltering",
+    "metricGroup": "metadataPassthrough",
     "hash": "3333333333333333333333333333333333333333",
     "query": {
       "title": "The 39 Steps",
@@ -268,8 +268,8 @@
     },
     "media": "audiobook",
     "files": ["The 39 Steps.m4b"],
-    "expected": [],
-    "expectedFiles": []
+    "expected": ["m4b"],
+    "expectedFiles": [["The 39 Steps.m4b"]]
   },
   {
     "id": "match-carol-complete-tracks",
@@ -304,7 +304,7 @@
   {
     "id": "match-carol-wrong-language",
     "work": "christmas-carol",
-    "metricGroup": "metadataFiltering",
+    "metricGroup": "metadataPassthrough",
     "hash": "4444444444444444444444444444444444444444",
     "query": {
       "title": "A Christmas Carol",
@@ -318,8 +318,8 @@
     },
     "media": "audiobook",
     "files": ["A Christmas Carol.m4b"],
-    "expected": [],
-    "expectedFiles": []
+    "expected": ["m4b"],
+    "expectedFiles": [["A Christmas Carol.m4b"]]
   },
   {
     "id": "match-carol-track-gap",

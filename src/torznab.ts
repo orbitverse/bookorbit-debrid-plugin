@@ -99,11 +99,13 @@ const searchFeed = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   resolveMetadata: ReturnType<typeof metadataLookup>,
 ) {
+  const host = yield* Network;
+  const title = host.buildSearchText({ ...q, author: null });
   const url = new URL(endpoint);
   url.search = new URLSearchParams({
     t: "search",
     apikey: key,
-    q: [q.title, q.author].filter(Boolean).join(" "),
+    q: host.buildSearchText(q),
     cat: q.mediaKind === "audiobook" ? "3030" : "7020",
     extended: "1",
     limit: "50",
@@ -191,11 +193,7 @@ const searchFeed = Effect.fnUntraced(function* (
     item.hash ? [{ ...item.torrent, hash: item.hash }] : [],
   );
   const relevant = (torrent: Omit<Torrent, "hash">) =>
-    matches(q.title, torrent.title) &&
-    (!q.author || !torrent.author || matches(q.author, torrent.author)) &&
-    (!q.language ||
-      !torrent.language ||
-      q.language.toLowerCase() === torrent.language.toLowerCase());
+    matches(title, torrent.title);
   const pending = new Map<string, Omit<Torrent, "hash">[]>();
   for (const item of parsed) {
     const torrent = item.torrent;
@@ -204,7 +202,6 @@ const searchFeed = Effect.fnUntraced(function* (
     if (existing) existing.push(torrent);
     else if (pending.size < 4) pending.set(item.download, [torrent]);
   }
-  const host = yield* Network;
   let metadataExpired = false;
   yield* Effect.forEach(
     [...pending],
