@@ -1,7 +1,7 @@
 # BookOrbit Debrid
 
 Find ebooks and audiobooks through Prowlarr or Jackett and your debrid account.
-BookOrbit downloads the files directly; no local torrent client is needed.
+BookOrbit downloads the files directly from your provider.
 
 **Early preview:** TorBox, EasyDebrid, Real-Debrid and Debrid-Link are supported.
 Only TorBox has been verified with live BookOrbit downloads.
@@ -22,7 +22,6 @@ For future updates, use **Check for updates** or enable **Install signed updates
 | Base URL                | Your Prowlarr or Jackett address, such as `http://prowlarr:9696`.                            |
 | Allow private addresses | Enable for a server on your local network.                                                   |
 | Torznab API paths       | Leave blank for automatic public book indexer discovery in Prowlarr. Jackett setup is below. |
-| Show uncached torrents  | Leave off for ready downloads only. Enable for the two-step preparation option below.        |
 
 ## Accounts
 
@@ -55,8 +54,8 @@ downloading, and backups may retain them. Keep your server and backups private.
 
 ## Preparing a download
 
-With TorBox, Real-Debrid or Debrid-Link, enable **Show uncached torrents** to find
-something to prepare when no ready book is available.
+With TorBox, Real-Debrid or Debrid-Link, enable the source’s uncached-results
+option to find something to prepare when no ready book is available.
 
 Results marked **Prepare** may need downloading into your debrid account first.
 **View files**, **Download release**, or an automatic grab can start this step and
@@ -72,7 +71,7 @@ indexers, enter paths such as `/1/api,/2/api`.
 
 Use public indexers that return an infohash or magnet. Private and hashless
 results are not supported. Real-Debrid and Debrid-Link check your account rather
-than the shared cache; accounts with more than 100 torrents are not supported.
+than the shared cache; accounts with more than 100 entries are not supported.
 
 Preparation does not guarantee a supported book. Real-Debrid may ask you to
 select files on its website when several book files are available.
