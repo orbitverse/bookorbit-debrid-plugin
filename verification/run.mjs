@@ -20,7 +20,7 @@ const Corpus = Schema.Array(
     metricGroup: Schema.optionalKey(
       Schema.Literals([
         "bookIdentity",
-        "metadataFiltering",
+        "metadataPassthrough",
         "mediaCompleteness",
         "unknownMetadata",
       ]),
@@ -179,7 +179,7 @@ for (let repetition = 0; repetition < 3; repetition++)
           }
         },
         logger: { log: (s) => logs.push(s), warn: (s) => logs.push(s) },
-        buildSearchText: (q) => q.title,
+        buildSearchText: (q) => [q.title, q.author].filter(Boolean).join(" "),
         saveCredential: async () => {
           fixtureFailures++;
           throw Error("Unexpected credential write");
@@ -230,6 +230,12 @@ for (let repetition = 0; repetition < 3; repetition++)
         `${sample.id}: search outcome`,
       );
       assert(!calls.includes("createtorrent"), "Search must be read-only");
+      if (sample.metricGroup === "metadataPassthrough")
+        for (const release of releases) {
+          assert.equal(release.author, feed.author);
+          assert.equal(release.language, feed.language);
+          assert.equal(release.bookTitle, undefined);
+        }
       const actual = releases.map((r) => r.format).sort();
       const expected = [...sample.expected].sort();
       const actualIdentities = releases
@@ -439,11 +445,9 @@ const classifyRows = (selected) => {
     recall: counts.tp + counts.fn ? counts.tp / (counts.tp + counts.fn) : null,
   };
 };
-const matchingRows = rows.filter((row) =>
-  ["bookIdentity", "metadataFiltering"].includes(row.metricGroup),
-);
+const matchingRows = rows.filter((row) => row.metricGroup === "bookIdentity");
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   runId,
   timestamp: new Date().toISOString(),
   codeSha,
@@ -477,9 +481,19 @@ const report = {
     bookIdentity: classifyRows(
       rows.filter((row) => row.metricGroup === "bookIdentity"),
     ),
-    metadataFiltering: classifyRows(
-      rows.filter((row) => row.metricGroup === "metadataFiltering"),
-    ),
+    metadataPassthrough: {
+      sampleCount: rows.filter(
+        (row) => row.metricGroup === "metadataPassthrough",
+      ).length,
+      returnedCandidates: rows
+        .filter((row) => row.metricGroup === "metadataPassthrough")
+        .reduce((n, row) => n + row.actualIdentities.length, 0),
+      passed: rows.filter(
+        (row) => row.metricGroup === "metadataPassthrough" && row.passed,
+      ).length,
+      precision: null,
+      recall: null,
+    },
     mediaCompleteness: classifyRows(
       rows.filter((row) => row.metricGroup === "mediaCompleteness"),
     ),
@@ -500,7 +514,7 @@ const report = {
     ).size,
     labeledCases: corpus.filter((row) => row.metricGroup).length,
     groundTruth:
-      "Manual synthetic hash+selected-file fingerprint labels; TP/FP/FN count candidate identities and tnQueries counts empty negative queries; media completeness and missing metadata are separate strata; not real catalogue or exact-edition accuracy",
+      "Manual synthetic hash+selected-file fingerprint labels; TP/FP/FN count candidate identities and tnQueries counts empty negative queries; metadata passthrough, media completeness and missing metadata are separate strata; not real catalogue or exact-edition accuracy",
   },
   matchingAccuracy: {
     precision: null,
@@ -582,7 +596,7 @@ const Classification = Schema.Struct({
   recall: Schema.NullOr(Schema.Number),
 });
 const Report = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literal(2),
   runId: Schema.String,
   timestamp: Schema.String,
   codeSha: Schema.String,
@@ -607,7 +621,13 @@ const Report = Schema.Struct({
   labeledMatching: Schema.Struct({
     identity: Classification,
     bookIdentity: Classification,
-    metadataFiltering: Classification,
+    metadataPassthrough: Schema.Struct({
+      sampleCount: Schema.Int,
+      returnedCandidates: Schema.Int,
+      passed: Schema.Int,
+      precision: Schema.Null,
+      recall: Schema.Null,
+    }),
     mediaCompleteness: Classification,
     unknownMetadata: Schema.Struct({
       sampleCount: Schema.Int,

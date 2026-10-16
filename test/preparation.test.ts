@@ -103,7 +103,8 @@ test("uncached preparation is opt-in, read-only in search and explicit in result
   assert.equal(results.length, 1);
   const [release] = results;
   assert.match(release.title, /Prepare in TorBox.*download later/);
-  assert(!release.title.includes("EPUB"));
+  assert(release.title.startsWith("The Little Prince EPUB · Prepare in"));
+  assert.equal(release.bookTitle, undefined);
   assert.equal(release.format, undefined);
   assert.equal(release.primaryFileCount, undefined);
   assert.equal(release.sizeBytes, null);
