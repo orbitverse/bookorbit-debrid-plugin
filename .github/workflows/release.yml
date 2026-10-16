@@ -33,7 +33,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - id: version
-        run: node scripts/check-release.mjs
+        run: pnpm check:release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: plugin
@@ -62,10 +62,17 @@ jobs:
         with:
           name: plugin
           path: dist
+      - name: Check out pinned release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: orbitverse/bookorbit-plugin-tools
+          ref: 53750a4b49e19afe1c99e2ce4765b3deed49d511
+          path: .plugin-tools
+          persist-credentials: false
       - name: Sign checked bundle
         env:
           PLUGIN_SIGNING_KEY: ${{ secrets.PLUGIN_SIGNING_KEY }}
-        run: node scripts/release.mjs
+        run: node .plugin-tools/cli.mjs sign-release
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
