@@ -1,6 +1,6 @@
 {
   "name": "bookorbit-debrid-plugin",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Cached ebook and audiobook downloads for BookOrbit",
   "scripts": {
     "build": "bookorbit-plugin-tools build",
@@ -30,7 +30,7 @@
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "@orbitverse/bookorbit-plugin-tools": "git+https://github.com/orbitverse/bookorbit-plugin-tools.git#53750a4b49e19afe1c99e2ce4765b3deed49d511"
+    "@orbitverse/bookorbit-plugin-tools": "git+https://github.com/orbitverse/bookorbit-plugin-tools.git#d1eee42f92c98c501268acfa369c3f6d29b80496"
   },
   "private": true
 }

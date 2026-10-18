@@ -174,8 +174,8 @@ importers:
         version: 4.0.4
     devDependencies:
       '@orbitverse/bookorbit-plugin-tools':
-        specifier: git+https://github.com/orbitverse/bookorbit-plugin-tools.git#53750a4b49e19afe1c99e2ce4765b3deed49d511
-        version: https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511
+        specifier: git+https://github.com/orbitverse/bookorbit-plugin-tools.git#d1eee42f92c98c501268acfa369c3f6d29b80496
+        version: https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/d1eee42f92c98c501268acfa369c3f6d29b80496
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
@@ -366,9 +366,9 @@ packages:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
 
-  '@orbitverse/bookorbit-plugin-tools@https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511':
-    resolution: {gitHosted: true, integrity: sha512-+TGO5BGsQZczWkQPQpZRQjKf6WNw/wcVQj85qMk+VFHSntTf8ovRT9qIvCY2XYkxduiFrGJ/Gra1rSXFXGO1dQ==, tarball: https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511}
-    version: 0.1.0
+  '@orbitverse/bookorbit-plugin-tools@https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/d1eee42f92c98c501268acfa369c3f6d29b80496':
+    resolution: {gitHosted: true, integrity: sha512-Pn3wI7QEz9V9R1XExzoCjXbPWWi4UbCNvRv1u8UCcUSp/my4l0dNJp3uSOhW0zFyvrmW1jS9CqFTnfMLqZpldg==, tarball: https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/d1eee42f92c98c501268acfa369c3f6d29b80496}
+    version: 0.1.1
     engines: {node: '>=22'}
     hasBin: true
 
@@ -1017,7 +1017,7 @@ snapshots:
       '@tybys/wasm-util': 0.10.4
     optional: true
 
-  '@orbitverse/bookorbit-plugin-tools@https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/53750a4b49e19afe1c99e2ce4765b3deed49d511':
+  '@orbitverse/bookorbit-plugin-tools@https://codeload.github.com/orbitverse/bookorbit-plugin-tools/tar.gz/d1eee42f92c98c501268acfa369c3f6d29b80496':
     dependencies:
       esbuild: 0.28.2
 
