@@ -5,7 +5,7 @@ BookOrbit downloads the files directly from your provider.
 
 Use TorBox, EasyDebrid, Real-Debrid or Debrid-Link.
 
-Only download content you are authorized to access. A service account or subscription does not grant rights to a book.
+Only download content you are authorized to access. 
 
 ## Install
 
@@ -93,5 +93,3 @@ pnpm check
 ```
 
 The uploadable file is `dist/index.mjs`. Use `pnpm build` to rebuild without checks.
-
-Copyright © 2026 campfireshuffle. AGPL-3.0 licensed. Vendored BookOrbit types retain their upstream notice in `vendor/`.
