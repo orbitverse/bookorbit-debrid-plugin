@@ -179,12 +179,12 @@ const metadataHash = Effect.fnUntraced(function* (
         catch: () => fail("Could not release torrent metadata."),
       });
       const location = response.headers.get("location");
+      const magnet = location && magnetHash(location);
+      if (magnet) return magnet;
       if (!location || hop === 3)
         return yield* Effect.fail(
           fail("Torrent metadata redirect limit reached."),
         );
-      const magnet = magnetHash(location);
-      if (magnet) return magnet;
       // LAN permission belongs to the indexer, not an arbitrary redirect host.
       url = yield* Effect.try({
         try: () => downloadUrl(new URL(location, url).href, endpoint, key),
