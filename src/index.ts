@@ -19,9 +19,7 @@ const run = async <A>(
       Effect.timeoutOrElse({
         duration: "18 seconds",
         orElse: () =>
-          Effect.fail(
-            fail("Request timed out. Retry with fewer indexers.", "timeout"),
-          ),
+          Effect.fail(fail("Request timed out. Try again shortly.", "timeout")),
       }),
     ),
     { signal },
