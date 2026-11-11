@@ -40,13 +40,17 @@ export const discover = Effect.fnUntraced(function* (
   mediaKinds: readonly PluginReleaseQuery["mediaKind"][],
 ) {
   const base = baseUrl.replace(/\/+$/, "") + "/";
-  // The body is read under the same limit as the request, so feeds always keep part of the search.
+  // One limit covers the request and reading its body, so feeds always keep part of the search
+  // and a slow discovery reads the same whichever part stalled. The request's own limit is set
+  // beyond it so that this is the only deadline.
   const body = yield* request(
     new URL("api/v1/indexer", base).href,
     "Prowlarr",
     {
       headers: { "X-Api-Key": key },
     },
+    true,
+    "17 seconds",
   ).pipe(
     Effect.flatMap(json),
     Effect.timeoutOrElse({

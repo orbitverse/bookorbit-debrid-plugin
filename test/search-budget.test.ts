@@ -257,3 +257,25 @@ test("slow indexer discovery is reported as slow discovery, not as feeds that ne
   assert(!f.stages.includes("feed"));
   assert(!f.warnings.some((message) => message.includes("/1/api")));
 });
+
+test("indexer discovery whose headers never arrive gets the same discovery timeout", async () => {
+  const f = fixture(true);
+  const fetch = f.host.fetch;
+  f.host.fetch = (input, init) =>
+    new URL(input).pathname === "/api/v1/indexer"
+      ? new Promise<Response>(() => {})
+      : fetch(input, init);
+  const start = performance.now();
+  await assert.rejects(
+    plugin.search(query, config, f.host, AbortSignal.timeout(20000)),
+    (error) => {
+      assert(error instanceof Error && "kind" in error);
+      assert.equal(error.kind, "timeout");
+      assert.match(error.message, /^Prowlarr: indexer discovery timed out/);
+      return true;
+    },
+  );
+  const elapsed = performance.now() - start;
+  assert(elapsed >= 11900 && elapsed < 13000, `Search took ${elapsed}ms`);
+  assert(!f.stages.includes("feed"));
+});
