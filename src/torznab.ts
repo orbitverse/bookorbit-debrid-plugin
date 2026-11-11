@@ -110,7 +110,9 @@ const searchFeed = Effect.fnUntraced(function* (
     extended: "1",
     limit: "50",
   }).toString();
-  const response = yield* request(url.href, "Torznab");
+  // A feed behind a browser challenge can take longer than any other request; the search's own
+  // collection deadline, not this one, decides how long it is worth waiting for.
+  const response = yield* request(url.href, "Torznab", {}, true, "17 seconds");
   const body = yield* Effect.tryPromise({
     try: () => response.text(),
     catch: () => fail("Could not read Torznab results."),

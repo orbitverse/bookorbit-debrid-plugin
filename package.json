@@ -1,6 +1,6 @@
 {
   "name": "bookorbit-debrid-plugin",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Cached ebook and audiobook downloads for BookOrbit",
   "scripts": {
     "build": "bookorbit-plugin-tools build",

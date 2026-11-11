@@ -32,7 +32,7 @@ const config: PluginIndexerConfig = {
 const feed = (items = "") =>
   new Response(`<rss><channel><title>Books</title>${items}</channel></rss>`);
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-function fixture(stalled: boolean | "mixed" = false) {
+function fixture(stalled: boolean | "mixed" | "slow" = false) {
   const stages: string[] = [],
     warnings: string[] = [];
   const host: PluginHost = {
@@ -55,6 +55,13 @@ function fixture(stalled: boolean | "mixed" = false) {
       }
       if (url.pathname.endsWith("/api")) {
         stages.push("feed");
+        if (stalled === "slow") {
+          if (url.pathname !== "/1/api") return feed();
+          await pause(13000);
+          return feed(
+            `<item><title>The Little Prince Audiobook</title><torznab:attr name="infohash" value="${hash}"/></item>`,
+          );
+        }
         if (
           stalled === true ||
           (stalled === "mixed" && url.pathname !== "/2/api") ||
@@ -130,10 +137,35 @@ test("an unfinished three-feed collection returns a timeout instead of a false e
           return true;
         },
       );
-      assert(performance.now() - start < 14000);
+      const elapsed = performance.now() - start;
+      // Nothing was worth checking at twelve seconds, so the feeds get the longer deadline.
+      assert(elapsed >= 15000 && elapsed < 18000, `Search took ${elapsed}ms`);
       assert(!f.stages.includes("cache"));
+      assert(
+        f.warnings.some((message) =>
+          message.includes(
+            mode === true ? "/1/api, /2/api, /3/api" : "/1/api, /3/api",
+          ),
+        ),
+      );
     }),
   );
+});
+
+test("a feed that answers after twelve seconds is kept when no other feed had matches", async () => {
+  const f = fixture("slow"),
+    start = performance.now();
+  const releases = await plugin.search(
+    query,
+    config,
+    f.host,
+    AbortSignal.timeout(20000),
+  );
+  const elapsed = performance.now() - start;
+  assert.equal(releases.length, 1);
+  assert(f.stages.includes("cache"));
+  assert(elapsed >= 13000 && elapsed < 18000, `Search took ${elapsed}ms`);
+  assert(!f.warnings.some((message) => /timed out/i.test(message)));
 });
 
 test("caller cancellation stops feed collection without querying cache or returning partial releases", async () => {

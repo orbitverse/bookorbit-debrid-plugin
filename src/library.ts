@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import {
@@ -10,6 +11,7 @@ import {
   type PluginReleaseCandidate,
   type File,
 } from "./model.js";
+import { collect } from "./collect.js";
 import type { PluginIndexerConfig } from "../vendor/bookorbit-plugin-api.js";
 import { Network, decode } from "./http.js";
 import { discover, searchFeeds } from "./torznab.js";
@@ -55,44 +57,38 @@ export const search = Effect.fnUntraced(function* (
   const host = yield* Network;
   const title = host.buildSearchText({ ...q, author: null });
   const searchIndexer = searchFeeds(account.indexerKey, q);
-  type Outcome = Result.Result<
-    Effect.Success<ReturnType<typeof searchIndexer>>,
-    ReturnType<typeof fail>
-  >;
-  const collected: (Outcome | undefined)[] = [];
-  let collectionExpired = false;
+  const started = yield* Clock.currentTimeMillis;
+  const endpoints = configured.length
+    ? configured
+    : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
+  const elapsed = (yield* Clock.currentTimeMillis) - started;
+  // Discovery, feed requests and metadata share one stage. It ends early enough to leave time for
+  // cache access once a feed has matches, and waits longer only while there is nothing to check.
+  const collected = yield* collect(endpoints, searchIndexer, {
+    concurrency: 4,
+    softMs: Math.max(0, 12000 - elapsed),
+    hardMs: Math.max(0, 16000 - elapsed),
+    satisfied: (settled) =>
+      settled.some(
+        (outcome) =>
+          outcome !== undefined &&
+          Result.isSuccess(outcome) &&
+          outcome.success.some((t) => matches(title, t.title)),
+      ),
+  });
+  const collectionExpired = collected.expired;
+  const unfinished = endpoints
+    .filter((_, index) => collected.outcomes[index] === undefined)
+    .map((endpoint) => new URL(endpoint).pathname);
   const collectionTimeout = () =>
     fail(
-      "Indexer search timed out before all feeds completed. Retry with fewer indexers.",
+      `Indexer search timed out waiting for ${unfinished.join(", ")}. Retry shortly; the first search after a restart can be slow.`,
       "timeout",
     );
-  // Discovery, feed requests and metadata share one stage budget, leaving time for cache access.
-  yield* Effect.gen(function* () {
-    const endpoints = configured.length
-      ? configured
-      : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
-    yield* Effect.forEach(
-      endpoints,
-      (endpoint, index) =>
-        searchIndexer(endpoint).pipe(
-          Effect.result,
-          Effect.map((outcome) => {
-            collected[index] = outcome;
-          }),
-        ),
-      { concurrency: 4, discard: true },
-    );
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: "12 seconds",
-      orElse: () =>
-        Effect.sync(() => {
-          collectionExpired = true;
-          host.logger.warn(collectionTimeout().message);
-        }),
-    }),
+  if (collectionExpired) host.logger.warn(collectionTimeout().message);
+  const outcomes = collected.outcomes.filter(
+    (outcome) => outcome !== undefined,
   );
-  const outcomes = collected.filter((outcome) => outcome !== undefined);
   const successful = outcomes.filter(Result.isSuccess);
   const firstFailure = outcomes.find(Result.isFailure)?.failure;
   if (!successful.length)

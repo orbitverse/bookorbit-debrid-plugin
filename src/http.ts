@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -18,6 +19,7 @@ export const request = Effect.fnUntraced(function* (
   label: string,
   init: PluginRequestInit = {},
   retry = true,
+  limit: Duration.Input = "12 seconds",
 ) {
   const host = yield* Network;
   const attempt = Effect.gen(function* () {
@@ -67,7 +69,7 @@ export const request = Effect.fnUntraced(function* (
       : attempt
   ).pipe(
     Effect.timeoutOrElse({
-      duration: "12 seconds",
+      duration: limit,
       orElse: () =>
         Effect.fail(fail(`${label}: request timed out.`, "timeout")),
     }),

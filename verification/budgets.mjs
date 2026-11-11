@@ -35,7 +35,7 @@ const feed = () =>
     `<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><title>Fixture</title><item><title>Pride and Prejudice</title><torznab:attr name="infohash" value="${hash}"/></item></channel></rss>`,
   );
 const corpus = [
-  { id: "request-expiry", budgetMs: 12000, kind: "timeout", releases: 0 },
+  { id: "request-expiry", budgetMs: 16000, kind: "timeout", releases: 0 },
   { id: "partial-feed-expiry", budgetMs: 12000, kind: "success", releases: 1 },
   { id: "operation-expiry", budgetMs: 18000, kind: "timeout", releases: 0 },
   { id: "external-cancellation", budgetMs: 10, kind: "cancelled", releases: 0 },
