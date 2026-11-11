@@ -16,6 +16,14 @@ test("titles that differ only by an apostrophe match in both directions", () => 
     ["Enders Game", "Ender’s Game - Orson Scott Card [EPUB]"],
     ["Ender's Game", "Ender’s Game - Orson Scott Card [EPUB]"],
     ["Ender's Game", "Ender_s_Game.epub"],
+    ["Ender‘s Game", "Enders Game - Orson Scott Card [EPUB]"],
+    ["Enderʼs Game", "Enders Game - Orson Scott Card [EPUB]"],
+    ["Ender`s Game", "Enders Game - Orson Scott Card [EPUB]"],
+    ["Enders Game", "Ender‘s Game - Orson Scott Card [EPUB]"],
+    ["Enders Game", "Enderʼs Game - Orson Scott Card [EPUB]"],
+    ["Enders Game", "Ender`s Game - Orson Scott Card [EPUB]"],
+    ["Ender's Game", "Enderʼs Game - Orson Scott Card [EPUB]"],
+    ["Enderʼs Game", "Ender s Game - Orson Scott Card [EPUB]"],
   ])
     assert(matches(query, title), `${query} should match ${title}`);
 });
@@ -35,6 +43,10 @@ test("a title missing a real query word is still rejected", () => {
     ["Ender's Game", "Enders Shadow - Orson Scott Card [EPUB]"],
     ["Ender's Game", "Ender's Shadow - Orson Scott Card [EPUB]"],
     ["Enders Game", "Ender's Shadow - Orson Scott Card [EPUB]"],
+    ["Ender‘s Game", "Enders Shadow - Orson Scott Card [EPUB]"],
+    ["Enderʼs Game", "Enderʼs Shadow - Orson Scott Card [EPUB]"],
+    ["Ender`s Game", "Ender`s Shadow - Orson Scott Card [EPUB]"],
+    ["`", "Enders Game"],
     ["Pride and Prejudice", "Pride & Zombies epub"],
     ["Pride and Prejudice", "Pride Prejudice epub"],
     ["Pride & Prejudice", "Pride and Zombies epub"],

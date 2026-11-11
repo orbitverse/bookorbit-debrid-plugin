@@ -14,7 +14,7 @@ const normalize = (s: string) =>
 // Releases drop or space out apostrophes and write "&" for "and"; accept either
 // spelling of both, and still require every query word.
 const words = (s: string, apostrophe: string) =>
-  normalize(s.replace(/['\u2019]/g, apostrophe))
+  normalize(s.replace(/['`\u2018\u2019\u02bc]/g, apostrophe))
     .split(" ")
     .filter(Boolean);
 export function matches(title: string, value: string): boolean {

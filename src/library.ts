@@ -267,11 +267,13 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
   const { account, endpoints, baseUrl } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
   yield* service.verify(account.debrid.key);
+  // Some labels already end in "account"; the sentences below add their own noun.
+  const name = service.label.replace(/ account$/, "");
   if (!endpoints.length) {
     yield* discover(baseUrl, account.indexerKey, ["ebook", "audiobook"]);
     return {
       success: true,
-      indexerName: `BookOrbit Debrid: Prowlarr indexer configuration and ${service.label} account access verified`,
+      indexerName: `BookOrbit Debrid: Prowlarr indexer configuration and ${name} account access verified`,
     };
   }
   const q: PluginReleaseQuery = {
@@ -289,6 +291,6 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
   });
   return {
     success: true,
-    indexerName: `BookOrbit Debrid: indexer search and ${service.label} cache access verified; ${releases.length} matching cached releases`,
+    indexerName: `BookOrbit Debrid: indexer search and ${name} cache access verified; ${releases.length} matching cached releases`,
   };
 });

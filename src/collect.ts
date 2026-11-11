@@ -6,9 +6,10 @@ import type * as Result from "effect/Result";
  * Runs `work` for every source concurrently and reports what settled, in source order.
  *
  * Collection ends when every source has settled. Once `softMs` has passed it also ends as soon
- * as `satisfied` accepts the outcomes so far, and at `hardMs` it ends regardless. A slow source
- * therefore only delays an answer that could not have been given without it. Sources still
- * running when collection ends are interrupted and left `undefined`.
+ * as `satisfied` accepts the outcomes so far, and at `hardMs` it ends regardless. Until `softMs`
+ * collection therefore waits for every source; only after it does a slow source stop delaying an
+ * answer that is already satisfied. Sources still running when collection ends are interrupted
+ * and left `undefined`.
  */
 export const collect = Effect.fnUntraced(function* <S, A, E, R>(
   sources: readonly S[],
