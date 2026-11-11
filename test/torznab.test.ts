@@ -270,6 +270,27 @@ test("metadata filters unrelated titles, deduplicates downloads and bounds fanou
   assert(!f.calls.some((url) => url.searchParams.get("link") === "unrelated"));
 });
 
+test("matching results beyond the torrent link lookup limit are reported once, without titles or links", async () => {
+  const magnet: PluginHost["fetch"] = async () =>
+    new Response(null, {
+      status: 301,
+      headers: { location: `magnet:?xt=urn:btih:${hash}` },
+    });
+  const links = (count: number) =>
+    Array.from({ length: count }, (_, n) =>
+      item(`/prowlarr/3/download?link=${n}`),
+    ).join("");
+  const f = fixture(links(6), magnet);
+  assert.equal((await f.run()).length, 4);
+  assert.deepEqual(f.warnings, [
+    "Torznab: more than four matching results needed a torrent link lookup; the rest were left out.",
+  ]);
+  assert(!/Book|download|link=|SYNTHETIC/.test(f.warnings[0]), f.warnings[0]);
+  const within = fixture(links(4), magnet);
+  assert.equal((await within.run()).length, 4);
+  assert.deepEqual(within.warnings, []);
+});
+
 test("metadata batch expiry retains direct and completed results beside a stalled lookup", async () => {
   const f = fixture(
     direct +

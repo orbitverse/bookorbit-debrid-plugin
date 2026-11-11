@@ -210,3 +210,50 @@ test("caller cancellation stops feed collection without querying cache or return
   assert(f.stages.includes("feed"));
   assert(!f.stages.includes("cache"));
 });
+
+test("slow indexer discovery is reported as slow discovery, not as feeds that never answered", async () => {
+  const f = fixture(true);
+  const fetch = f.host.fetch;
+  // The indexer list's headers arrive at once; its body arrives after the discovery limit.
+  f.host.fetch = async (input, init) =>
+    new URL(input).pathname === "/api/v1/indexer"
+      ? new Response(
+          new ReadableStream({
+            async start(controller) {
+              await pause(13000);
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify([
+                    {
+                      id: 1,
+                      enable: true,
+                      supportsSearch: true,
+                      protocol: "torrent",
+                      privacy: "public",
+                      capabilities: { categories: [{ id: 3030 }] },
+                    },
+                  ]),
+                ),
+              );
+              controller.close();
+            },
+          }),
+        )
+      : fetch(input, init);
+  const start = performance.now();
+  await assert.rejects(
+    plugin.search(query, config, f.host, AbortSignal.timeout(20000)),
+    (error) => {
+      assert(error instanceof Error && "kind" in error);
+      assert.equal(error.kind, "timeout");
+      assert.match(error.message, /^Prowlarr: indexer discovery timed out/);
+      assert(!error.message.includes("/1/api"), error.message);
+      return true;
+    },
+  );
+  const elapsed = performance.now() - start;
+  // Discovery ends at twelve seconds, which leaves feeds at least four of the stage's sixteen.
+  assert(elapsed >= 11900 && elapsed < 13000, `Search took ${elapsed}ms`);
+  assert(!f.stages.includes("feed"));
+  assert(!f.warnings.some((message) => message.includes("/1/api")));
+});

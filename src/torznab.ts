@@ -40,24 +40,37 @@ export const discover = Effect.fnUntraced(function* (
   mediaKinds: readonly PluginReleaseQuery["mediaKind"][],
 ) {
   const base = baseUrl.replace(/\/+$/, "") + "/";
-  const response = yield* request(
+  // The body is read under the same limit as the request, so feeds always keep part of the search.
+  const body = yield* request(
     new URL("api/v1/indexer", base).href,
     "Prowlarr",
     {
       headers: { "X-Api-Key": key },
     },
+  ).pipe(
+    Effect.flatMap(json),
+    Effect.timeoutOrElse({
+      duration: "12 seconds",
+      orElse: () =>
+        Effect.fail(
+          fail(
+            "Prowlarr: indexer discovery timed out. Retry shortly; the first request after a restart can be slow.",
+            "timeout",
+          ),
+        ),
+    }),
   );
   const indexers = yield* decode(
     Schema.Array(Indexer),
-    yield* json(response),
+    body,
     "Prowlarr indexers",
   );
-  const categories = new Set<number>(
-    mediaKinds.map((kind) => (kind === "audiobook" ? 3030 : 7020)),
-  );
-  const supports = (tree: readonly Category[]): boolean =>
-    tree.some((c) => categories.has(c.id) || supports(c.subCategories ?? []));
-  const ids = [
+  const supports = (tree: readonly Category[], category: number): boolean =>
+    tree.some(
+      (c) => c.id === category || supports(c.subCategories ?? [], category),
+    );
+  // Each media kind is searched on its own, so each is counted on its own.
+  const perKind = mediaKinds.map((kind) => [
     ...new Set(
       indexers
         .filter(
@@ -66,24 +79,29 @@ export const discover = Effect.fnUntraced(function* (
             i.supportsSearch === true &&
             i.protocol === "torrent" &&
             i.privacy === "public" &&
-            supports(i.capabilities?.categories ?? []),
+            supports(
+              i.capabilities?.categories ?? [],
+              kind === "audiobook" ? 3030 : 7020,
+            ),
         )
         .map((i) => i.id),
     ),
-  ];
-  if (!ids.length)
+  ]);
+  if (perKind.every((ids) => !ids.length))
     return yield* Effect.fail(
       fail(
         `No enabled public ${mediaKinds.length === 1 ? mediaKinds[0] : "ebook or audiobook"} indexers found in Prowlarr. Add one with the matching category, or enter Torznab API paths for another server.`,
       ),
     );
-  if (ids.length > 8)
+  if (perKind.some((ids) => ids.length > 8))
     return yield* Effect.fail(
       fail(
         "More than eight matching public indexers found. Choose up to eight using Torznab API paths.",
       ),
     );
-  return ids.map((id) => new URL(`${id}/api`, base).href);
+  return [...new Set(perKind.flat())].map(
+    (id) => new URL(`${id}/api`, base).href,
+  );
 });
 
 type Torrent = {
@@ -197,13 +215,19 @@ const searchFeed = Effect.fnUntraced(function* (
   const relevant = (torrent: Omit<Torrent, "hash">) =>
     matches(title, torrent.title);
   const pending = new Map<string, Omit<Torrent, "hash">[]>();
+  let leftOut = false;
   for (const item of parsed) {
     const torrent = item.torrent;
     if (item.hash || !item.download || !relevant(torrent)) continue;
     const existing = pending.get(item.download);
     if (existing) existing.push(torrent);
     else if (pending.size < 4) pending.set(item.download, [torrent]);
+    else leftOut = true;
   }
+  if (leftOut)
+    host.logger.warn(
+      "Torznab: more than four matching results needed a torrent link lookup; the rest were left out.",
+    );
   let metadataExpired = false;
   yield* Effect.forEach(
     [...pending],

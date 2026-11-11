@@ -85,8 +85,18 @@ export const search = Effect.fnUntraced(function* (
       "timeout",
     );
   if (collectionExpired) host.logger.warn(collectionTimeout().message);
-  const outcomes = collected.outcomes.filter(
-    (outcome) => outcome !== undefined,
+  // A feed's failure names its path only: never a query string or key.
+  const outcomes = collected.outcomes.flatMap((outcome, index) =>
+    outcome === undefined
+      ? []
+      : [
+          Result.mapError(outcome, (failure) =>
+            fail(
+              `${new URL(endpoints[index]).pathname}: ${failure.message}`,
+              failure.kind,
+            ),
+          ),
+        ],
   );
   const successful = outcomes.filter(Result.isSuccess);
   const firstFailure = outcomes.find(Result.isFailure)?.failure;
