@@ -11,10 +11,18 @@ const normalize = (s: string) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
+// Releases drop or space out apostrophes and write "&" for "and"; accept either
+// spelling of both, and still require every query word.
+const words = (s: string, apostrophe: string) =>
+  normalize(s.replace(/['\u2019]/g, apostrophe))
+    .split(" ")
+    .filter(Boolean);
 export function matches(title: string, value: string): boolean {
-  const words = normalize(title).split(" ").filter(Boolean);
-  const found = new Set(normalize(value).split(" "));
-  return words.length > 0 && words.every((word) => found.has(word));
+  const spelled = value.replace(/&/g, " and ");
+  const found = new Set([...words(spelled, " "), ...words(spelled, "")]);
+  return [words(title, " "), words(title, "")].some(
+    (query) => query.length > 0 && query.every((word) => found.has(word)),
+  );
 }
 
 export function selectFiles(
