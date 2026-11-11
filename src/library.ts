@@ -65,7 +65,6 @@ export const search = Effect.fnUntraced(function* (
   // Discovery, feed requests and metadata share one stage. It ends early enough to leave time for
   // cache access once a feed has matches, and waits longer only while there is nothing to check.
   const collected = yield* collect(endpoints, searchIndexer, {
-    concurrency: 4,
     softMs: Math.max(0, 12000 - elapsed),
     hardMs: Math.max(0, 16000 - elapsed),
     satisfied: (settled) =>

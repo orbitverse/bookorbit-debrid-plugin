@@ -14,7 +14,6 @@ export const collect = Effect.fnUntraced(function* <S, A, E, R>(
   sources: readonly S[],
   work: (source: S) => Effect.Effect<A, E, R>,
   options: {
-    readonly concurrency: number;
     readonly softMs: number;
     readonly hardMs: number;
     readonly satisfied: (
@@ -39,7 +38,7 @@ export const collect = Effect.fnUntraced(function* <S, A, E, R>(
             : Effect.void;
         }),
       ),
-    { concurrency: options.concurrency, discard: true },
+    { concurrency: "unbounded", discard: true },
   );
   const deadline = Effect.sleep(options.softMs).pipe(
     Effect.flatMap(() => {

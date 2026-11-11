@@ -69,8 +69,9 @@ For Jackett, enter the paths from your indexers’ Torznab URLs in **Torznab API
 paths**, separated by commas, without query strings. For specific Prowlarr
 indexers, enter paths such as `/1/api,/2/api`.
 
-Use public indexers that return an infohash or magnet. Private and hashless
-results are not supported. Real-Debrid and Debrid-Link check your account rather
+Use public indexers; private results are not supported. A result without an
+infohash or magnet is looked up through its torrent link, for up to four
+torrent links per feed. Real-Debrid and Debrid-Link check your account rather
 than the shared cache; accounts with more than 100 entries are not supported.
 
 Preparation does not guarantee a supported book. Real-Debrid may ask you to

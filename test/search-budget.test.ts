@@ -32,7 +32,10 @@ const config: PluginIndexerConfig = {
 const feed = (items = "") =>
   new Response(`<rss><channel><title>Books</title>${items}</channel></rss>`);
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-function fixture(stalled: boolean | "mixed" | "slow" = false) {
+function fixture(
+  stalled: boolean | "mixed" | "slow" | "last two answer" = false,
+  onFeedRequest = () => {},
+) {
   const stages: string[] = [],
     warnings: string[] = [];
   const host: PluginHost = {
@@ -55,6 +58,14 @@ function fixture(stalled: boolean | "mixed" | "slow" = false) {
       }
       if (url.pathname.endsWith("/api")) {
         stages.push("feed");
+        onFeedRequest();
+        if (stalled === "last two answer") {
+          if (url.pathname !== "/5/api" && url.pathname !== "/6/api")
+            return new Promise(() => {});
+          return feed(
+            `<item><title>The Little Prince Audiobook</title><torznab:attr name="infohash" value="${hash}"/></item>`,
+          );
+        }
         if (stalled === "slow") {
           if (url.pathname !== "/1/api") return feed();
           await pause(13000);
@@ -168,11 +179,34 @@ test("a feed that answers after twelve seconds is kept when no other feed had ma
   assert(!f.warnings.some((message) => /timed out/i.test(message)));
 });
 
+test("six configured feeds are all requested when the first four never answer", async () => {
+  const f = fixture("last two answer");
+  const paths = [1, 2, 3, 4, 5, 6].map((id) => `/${id}/api`);
+  const outcome = await plugin
+    .search(
+      query,
+      { ...config, settings: { indexerPaths: paths.join(",") } },
+      f.host,
+      AbortSignal.timeout(20000),
+    )
+    .catch((error: unknown) => error);
+  assert.equal(f.stages.filter((stage) => stage === "feed").length, 6);
+  assert(Array.isArray(outcome), `Search failed: ${outcome}`);
+  assert.equal(outcome.length, 1);
+  assert(
+    f.warnings.some((message) =>
+      message.includes("waiting for /1/api, /2/api, /3/api, /4/api."),
+    ),
+  );
+});
+
 test("caller cancellation stops feed collection without querying cache or returning partial releases", async () => {
-  const f = fixture(true);
+  const caller = new AbortController();
+  const f = fixture(true, () => caller.abort());
   await assert.rejects(
-    plugin.search(query, config, f.host, AbortSignal.timeout(30)),
+    plugin.search(query, config, f.host, caller.signal),
     /cancelled/,
   );
+  assert(f.stages.includes("feed"));
   assert(!f.stages.includes("cache"));
 });
