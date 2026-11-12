@@ -150,10 +150,22 @@ function downloadUrl(value: string, endpoint: string, key: string): URL {
   return url;
 }
 
-/** The torrent link gave no answer about the torrent; every other failure is an answer. */
+/**
+ * The torrent link gave no answer about the torrent. Only a complete response that was then
+ * judged is an answer: not found or another 4xx, an HTML page, too large, not a supported public
+ * v1 torrent, an untrusted link or too many redirects.
+ */
 class Unanswered extends Schema.TaggedError<Unanswered>()("Unanswered", {
   kind: Schema.Literals(["throttled", "unreachable", "error"]),
 }) {}
+
+// Everything that waits on the torrent link's connection goes through here, so a connection that
+// fails at any point before the response is complete, headers or body, is unreachable.
+const transport = <A>(wait: (signal: AbortSignal) => Promise<A>) =>
+  Effect.tryPromise({
+    try: wait,
+    catch: () => new Unanswered({ kind: "unreachable" }),
+  });
 
 const metadataHash = Effect.fnUntraced(function* (
   value: string,
@@ -161,27 +173,23 @@ const metadataHash = Effect.fnUntraced(function* (
   key: string,
 ) {
   const host = yield* Network;
+  const rejected = fail("Torrent metadata was invalid, blocked or too large.");
   let url = yield* Effect.try({
     try: () => downloadUrl(value, endpoint, key),
     catch: () => fail("Skipped an untrusted torrent metadata link."),
   });
   for (let hop = 0; hop <= 3; hop++) {
-    const response = yield* Effect.tryPromise({
-      try: async (signal) => {
-        const response = await host.fetch(url.href, { redirect: "manual" });
-        if (signal.aborted) {
-          await response.body?.cancel();
-          throw Error("cancelled");
-        }
-        return response;
-      },
-      catch: () => new Unanswered({ kind: "unreachable" }),
-    });
-    const release = Effect.tryPromise({
-      try: async () => {
+    const response = yield* transport(async (signal) => {
+      const response = await host.fetch(url.href, { redirect: "manual" });
+      if (signal.aborted) {
         await response.body?.cancel();
-      },
-      catch: () => fail("Could not release torrent metadata."),
+        throw Error("cancelled");
+      }
+      return response;
+    });
+    // The headers alone decided the answer: the body is dropped unread.
+    const release = Effect.promise(async () => {
+      await response.body?.cancel().catch(() => {});
     });
     if (response.status === 429 || response.status >= 500) {
       yield* release;
@@ -205,48 +213,48 @@ const metadataHash = Effect.fnUntraced(function* (
       });
       continue;
     }
-    const bytes = yield* Effect.tryPromise({
-      try: async (signal) => {
-        if (
-          !response.ok ||
-          /text\/html/i.test(response.headers.get("content-type") ?? "") ||
-          Number(response.headers.get("content-length")) > 2 * 1024 ** 2 ||
-          !response.body
-        ) {
-          await response.body?.cancel();
-          throw Error("invalid metadata");
+    const body = response.body;
+    if (
+      !response.ok ||
+      /text\/html/i.test(response.headers.get("content-type") ?? "") ||
+      Number(response.headers.get("content-length")) > 2 * 1024 ** 2 ||
+      !body
+    ) {
+      yield* release;
+      return yield* Effect.fail(rejected);
+    }
+    // The whole body, or nothing once it has passed the size limit.
+    const bytes = yield* transport(async (signal) => {
+      const reader = body.getReader(),
+        chunks: Uint8Array[] = [];
+      let size = 0;
+      const cancel = () => {
+        void reader.cancel().catch(() => {});
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        for (;;) {
+          const chunk = await reader.read();
+          if (signal.aborted) throw Error("cancelled");
+          if (chunk.done) break;
+          size += chunk.value.length;
+          if (size > 2 * 1024 ** 2) return;
+          chunks.push(chunk.value);
         }
-        const reader = response.body.getReader(),
-          chunks: Uint8Array[] = [];
-        let size = 0;
-        const cancel = () => {
-          void reader.cancel().catch(() => {});
-        };
-        signal.addEventListener("abort", cancel, { once: true });
-        try {
-          for (;;) {
-            const chunk = await reader.read();
-            if (signal.aborted) throw Error("cancelled");
-            if (chunk.done) break;
-            size += chunk.value.length;
-            if (size > 2 * 1024 ** 2) throw Error("oversized metadata");
-            chunks.push(chunk.value);
-          }
-          const bytes = new Uint8Array(size);
-          let offset = 0;
-          for (const chunk of chunks) {
-            bytes.set(chunk, offset);
-            offset += chunk.length;
-          }
-          return bytes;
-        } finally {
-          signal.removeEventListener("abort", cancel);
-          await reader.cancel().catch(() => {});
-          reader.releaseLock();
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
         }
-      },
-      catch: () => fail("Torrent metadata was invalid, blocked or too large."),
+        return bytes;
+      } finally {
+        signal.removeEventListener("abort", cancel);
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+      }
     });
+    if (!bytes) return yield* Effect.fail(rejected);
     const info = yield* Effect.try({
       try: () => infoBytes(bytes),
       catch: () => fail("Torrent metadata was not a supported v1 torrent."),
