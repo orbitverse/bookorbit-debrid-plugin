@@ -1,6 +1,5 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Result from "effect/Result";
 import {
   config,
   Preparation,
@@ -64,62 +63,58 @@ export const search = Effect.fnUntraced(function* (
   const elapsed = (yield* Clock.currentTimeMillis) - started;
   // Discovery, feed requests and metadata share one stage. It ends early enough to leave time for
   // cache access once a feed has matches, and waits longer only while there is nothing to check.
-  const collected = yield* collect(endpoints, searchIndexer, {
+  const relevant = (t: { readonly title: string }) => matches(title, t.title);
+  const feeds = (yield* collect(endpoints, searchIndexer, {
     softMs: Math.max(0, 12000 - elapsed),
     hardMs: Math.max(0, 16000 - elapsed),
-    satisfied: (settled) =>
-      settled.some(
-        (outcome) =>
-          outcome !== undefined &&
-          Result.isSuccess(outcome) &&
-          outcome.success.some((t) => matches(title, t.title)),
-      ),
-  });
-  const collectionExpired = collected.expired;
-  const unfinished = endpoints
-    .filter((_, index) => collected.outcomes[index] === undefined)
-    .map((endpoint) => new URL(endpoint).pathname);
+    matches: relevant,
+  })).map((feed, index) => ({
+    ...feed,
+    // A feed is named by its path only: never a query string or key.
+    path: new URL(endpoints[index]).pathname,
+  }));
+  const paths = (named: typeof feeds) =>
+    named.map((feed) => feed.path).join(", ");
+  const unfinished = feeds.filter((feed) => feed.stage !== "finished");
+  const unanswered = feeds.filter((feed) => feed.stage === "waiting");
+  const checkingLinks = feeds.filter((feed) => feed.lookups > 0);
   const collectionTimeout = () =>
     fail(
-      `Indexer search timed out waiting for ${unfinished.join(", ")}. Retry shortly; the first search after a restart can be slow.`,
+      unanswered.length
+        ? `Indexer search timed out waiting for ${paths(unanswered)}. Retry shortly; the first search after a restart can be slow.`
+        : `Indexer search timed out while ${paths(unfinished)} was still checking torrent links. Retry shortly; the first search after a restart can be slow.`,
       "timeout",
     );
-  if (collectionExpired) host.logger.warn(collectionTimeout().message);
-  // A feed's failure names its path only: never a query string or key.
-  const outcomes = collected.outcomes.flatMap((outcome, index) =>
-    outcome === undefined
-      ? []
-      : [
-          Result.mapError(outcome, (failure) =>
-            fail(
-              `${new URL(endpoints[index]).pathname}: ${failure.message}`,
-              failure.kind,
-            ),
-          ),
-        ],
+  if (unanswered.length) host.logger.warn(collectionTimeout().message);
+  const failures = feeds.flatMap((feed) =>
+    feed.failure
+      ? [fail(`${feed.path}: ${feed.failure.message}`, feed.failure.kind)]
+      : [],
   );
-  const successful = outcomes.filter(Result.isSuccess);
-  const firstFailure = outcomes.find(Result.isFailure)?.failure;
-  if (!successful.length)
-    return yield* Effect.fail(firstFailure ?? collectionTimeout());
-  for (const outcome of outcomes)
-    if (Result.isFailure(outcome)) host.logger.warn(outcome.failure.message);
-  const torrents = new Map<
-    string,
-    (typeof successful)[number]["success"][number]
-  >();
-  // Interleave feeds before applying the cache-check ceiling.
-  for (let i = 0; i < 50; i++)
-    for (const outcome of successful) {
-      const t = outcome.success[i];
-      if (t && matches(title, t.title) && torrents.size < 100)
-        torrents.set(t.hash, t);
-    }
+  if (failures.length + unanswered.length === feeds.length)
+    return yield* Effect.fail(failures[0] ?? collectionTimeout());
+  for (const failure of failures) host.logger.warn(failure.message);
+  const torrents = new Map<string, (typeof feeds)[number]["known"][number]>();
+  // Feeds that finished come first, interleaved before the cache-check ceiling applies. What
+  // unfinished feeds already knew follows, so it never displaces or reorders a finished feed's.
+  for (const finished of [true, false])
+    for (let i = 0; i < 50; i++)
+      for (const feed of feeds) {
+        const t = feed.known[i];
+        if ((feed.stage === "finished") !== finished || !t || !relevant(t))
+          continue;
+        if (torrents.size < 100 && (finished || !torrents.has(t.hash)))
+          torrents.set(t.hash, t);
+      }
   if (!torrents.size) {
-    if (firstFailure || collectionExpired)
-      return yield* Effect.fail(firstFailure ?? collectionTimeout());
+    if (failures.length || unfinished.length)
+      return yield* Effect.fail(failures[0] ?? collectionTimeout());
     return [];
   }
+  if (checkingLinks.length)
+    host.logger.warn(
+      `Indexer search stopped while ${paths(checkingLinks)} was still checking torrent links; matches already identified remain available.`,
+    );
   const available = yield* (
     prepareUncached && service.available ? service.available : service.cached
   )([...torrents.keys()], account.debrid.key);

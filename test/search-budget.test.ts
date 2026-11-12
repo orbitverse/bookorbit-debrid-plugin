@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { describe } from "node:test";
 import plugin from "../src/index.js";
 import type {
   PluginHost,
@@ -349,4 +349,379 @@ test("time spent on indexer discovery comes out of the time feeds are given", as
   const elapsed = performance.now() - start;
   // Sixteen seconds from the start of the search, not sixteen after discovery finished.
   assert(elapsed >= 15500 && elapsed < 17000, `Search took ${elapsed}ms`);
+});
+
+// Feed collection ends when every feed has finished, from twelve seconds once a finished feed has
+// a match, and at sixteen seconds. Whatever is known at that moment is used. Each case below is
+// one search against feeds and torrent links that answer at set times; the cases run side by
+// side because every one of them takes real seconds.
+const numbered = (n: number) => n.toString(16).padStart(40, "0");
+const hashed = (n: number, title = "The Little Prince Audiobook") =>
+  `<item><title>${title}</title><torznab:attr name="infohash" value="${numbered(n)}"/></item>`;
+/** A result whose hash is behind a torrent link that answers after `delay`, or never. */
+const linked = (feedPath: string, n: number, delay: number | "never") =>
+  `<item><title>The Little Prince Audiobook</title><enclosure type="application/x-bittorrent" url="${feedPath}/download?link=${n}-${delay}"/></item>`;
+const never = () => new Promise<never>(() => {});
+const waitingFor = (paths: string) =>
+  `Indexer search timed out waiting for ${paths}. Retry shortly; the first search after a restart can be slow.`;
+const stillChecking = (paths: string) =>
+  `Indexer search stopped while ${paths} was still checking torrent links; matches already identified remain available.`;
+type Feeds = Record<string, readonly [number | null, string?]>;
+/**
+ * Searches feeds that answer `[after milliseconds, with these items]`, or never when the time is
+ * `null`. `link` may replace how long torrent link `n` takes to answer.
+ */
+async function timeline(
+  feeds: Feeds,
+  link?: (n: number) => Promise<unknown>,
+  limit = query.limit,
+) {
+  const warnings: string[] = [],
+    asked: number[] = [];
+  let cacheAt: number | undefined;
+  const start = performance.now();
+  const host: PluginHost = {
+    ...fixture().host,
+    logger: { log() {}, warn: (message) => warnings.push(message) },
+    async fetch(input, init) {
+      const url = new URL(input);
+      const answer = feeds[url.pathname];
+      if (answer) {
+        if (answer[0] === null) return never();
+        await pause(answer[0]);
+        return feed(answer[1]);
+      }
+      if (url.pathname.endsWith("/download")) {
+        const [n, delay] = url.searchParams.get("link")!.split("-");
+        if (delay === "never") return never();
+        await (link ? link(Number(n)) : pause(Number(delay)));
+        return new Response(null, {
+          status: 301,
+          headers: { location: `magnet:?xt=urn:btih:${numbered(Number(n))}` },
+        });
+      }
+      assert(url.pathname.endsWith("/checkcached"));
+      cacheAt = performance.now() - start;
+      const hashes = JSON.parse(init!.body!).hashes as string[];
+      asked.push(...hashes.map((h) => parseInt(h, 16)));
+      return Response.json({
+        success: true,
+        data: Object.fromEntries(
+          hashes.map((h) => [
+            h,
+            {
+              hash: h,
+              name: "The Little Prince",
+              files: [{ name: "The Little Prince.m4b", size: 123 }],
+            },
+          ]),
+        ),
+      });
+    },
+  };
+  const outcome = await plugin
+    .search(
+      { ...query, limit },
+      { ...config, settings: { indexerPaths: Object.keys(feeds).join(",") } },
+      host,
+      AbortSignal.timeout(20000),
+    )
+    .catch((error: unknown) => error);
+  const elapsed = performance.now() - start;
+  return {
+    // The numbers of the releases' hashes in the order returned, or the search's failure.
+    releases: Array.isArray(outcome)
+      ? outcome.map((release) => parseInt(JSON.parse(release.guid).hash, 16))
+      : (outcome as Error & { kind: string }),
+    asked,
+    warnings,
+    elapsed,
+    // When collection ended: the cache was asked, or the search failed without asking it.
+    endedAt: cacheAt ?? elapsed,
+  };
+}
+const first = (count: number) => Array.from({ length: count }, (_, n) => n);
+const within = (elapsed: number, from: number, to: number) =>
+  assert(elapsed >= from && elapsed < to, `Took ${elapsed}ms`);
+
+describe("when feed collection ends", { concurrency: true }, () => {
+  test("every hashed match of a feed that answers after twelve seconds is used", async () => {
+    await Promise.all(
+      [1, 5, 30].map(async (count) => {
+        const run = await timeline(
+          {
+            "/1/api": [
+              12500,
+              first(count)
+                .map((n) => hashed(n))
+                .join(""),
+            ],
+          },
+          undefined,
+          100,
+        );
+        assert.deepEqual(run.asked, first(count));
+        assert.deepEqual(run.releases, first(count));
+        assert.deepEqual(run.warnings, []);
+        within(run.elapsed, 12400, 14000);
+      }),
+    );
+  });
+
+  test("four torrent links give four releases whenever their feed answers", async () => {
+    await Promise.all(
+      [1000, 11700, 12500].map(async (at) => {
+        const run = await timeline({
+          "/1/api": [
+            at,
+            first(4)
+              .map((n) => linked("/1", n, 200 + 25 * n))
+              .join(""),
+          ],
+        });
+        assert.deepEqual(run.releases, first(4), `at ${at}ms`);
+        assert.deepEqual(run.warnings, []);
+        // Two links are looked up at a time, so four take two rounds.
+        within(run.elapsed, at + 400, at + 1500);
+      }),
+    );
+  });
+
+  test("two torrent links that answer in the same instant after twelve seconds are both used", async () => {
+    let together: Promise<unknown> | undefined;
+    const run = await timeline(
+      { "/1/api": [12200, linked("/1", 0, 300) + linked("/1", 1, 300)] },
+      () => (together ??= pause(300)),
+    );
+    assert.deepEqual([...(run.releases as number[])].sort(), [0, 1]);
+    assert.deepEqual(run.warnings, []);
+  });
+
+  test("hashed matches are used at sixteen seconds when a torrent link beside them never answers", async () => {
+    await Promise.all(
+      // Either way the feed has not finished by sixteen seconds: its link has ten from its answer.
+      [9500, 12500].map(async (at) => {
+        const run = await timeline({
+          "/1/api": [
+            at,
+            first(3)
+              .map((n) => hashed(n))
+              .join("") + linked("/1", 3, "never"),
+          ],
+        });
+        assert.deepEqual(run.releases, first(3), `at ${at}ms`);
+        assert.deepEqual(run.warnings, [stillChecking("/1/api")]);
+        within(run.endedAt, 15950, 16050);
+      }),
+    );
+  });
+
+  test("a feed still checking its only torrent link at sixteen seconds is a timeout that says so", async () => {
+    const run = await timeline({ "/1/api": [7000, linked("/1", 0, "never")] });
+    assert(run.releases instanceof Error);
+    assert.equal(run.releases.kind, "timeout");
+    assert.equal(
+      run.releases.message,
+      "Indexer search timed out while /1/api was still checking torrent links. Retry shortly; the first search after a restart can be slow.",
+    );
+    assert.deepEqual(run.asked, []);
+    assert.deepEqual(run.warnings, []);
+    within(run.elapsed, 15950, 17000);
+  });
+
+  test("at twelve seconds a finished match is joined by what a feed still checking links already knows", async () => {
+    const run = await timeline({
+      "/1/api": [1000, hashed(0)],
+      "/2/api": [3500, hashed(1) + linked("/2", 2, "never")],
+      "/3/api": [null],
+    });
+    assert.deepEqual(run.releases, [0, 1]);
+    assert.deepEqual(run.warnings, [
+      waitingFor("/3/api"),
+      stillChecking("/2/api"),
+    ]);
+    within(run.endedAt, 11950, 12050);
+  });
+
+  test("a match first known after fourteen seconds is not held back by another feed's hanging link", async () => {
+    const run = await timeline({
+      "/1/api": [6000, linked("/1", 0, "never")],
+      "/2/api": [14010, hashed(1) + hashed(2)],
+    });
+    assert.deepEqual(run.releases, [1, 2]);
+    assert.deepEqual(run.warnings, [stillChecking("/1/api")]);
+    within(run.endedAt, 13960, 14060);
+  });
+
+  test("a match with nothing being looked up is answered at twelve seconds without the silent feed", async () => {
+    const run = await timeline({
+      "/1/api": [1000, hashed(0)],
+      "/2/api": [null],
+    });
+    assert.deepEqual(run.releases, [0]);
+    assert.deepEqual(run.warnings, [waitingFor("/2/api")]);
+    within(run.elapsed, 11900, 13000);
+  });
+
+  // `before` is what the search did before it used what unfinished feeds knew, recorded by running
+  // each scenario against that version: when collection ended, and the releases or the kind of
+  // failure. `gains` are the releases unfinished feeds add now.
+  const rejected = "<error/>";
+  const scenarios: Record<
+    string,
+    {
+      feeds: Feeds;
+      before: readonly [number, readonly number[] | "timeout" | "error"];
+      gains?: readonly number[];
+    }
+  > = {
+    "one fast feed": {
+      feeds: { "/1/api": [500, hashed(0)] },
+      before: [500, [0]],
+    },
+    "two fast feeds and a silent one": {
+      feeds: {
+        "/1/api": [500, hashed(0)],
+        "/2/api": [3000, hashed(1)],
+        "/3/api": [null],
+      },
+      before: [12000, [0, 1]],
+    },
+    "a match early and a feed that answers after thirteen seconds": {
+      feeds: { "/1/api": [1000, hashed(0)], "/2/api": [13000, hashed(1)] },
+      before: [12000, [0]],
+    },
+    "a single feed answering after twelve seconds": {
+      feeds: { "/1/api": [12500, hashed(0) + hashed(1) + hashed(2)] },
+      before: [12500, [0, 1, 2]],
+    },
+    "an empty feed, a late feed and a silent feed": {
+      feeds: {
+        "/1/api": [500, ""],
+        "/2/api": [13000, hashed(0) + hashed(1)],
+        "/3/api": [null],
+      },
+      before: [13000, [0, 1]],
+    },
+    "four quick links": {
+      feeds: {
+        "/1/api": [
+          1000,
+          first(4)
+            .map((n) => linked("/1", n, 200 + 25 * n))
+            .join(""),
+        ],
+      },
+      before: [1500, [0, 1, 2, 3]],
+    },
+    "a hanging link that uses up its budget before twelve seconds": {
+      feeds: {
+        "/1/api": [1000, hashed(0) + linked("/1", 1, "never")],
+        "/2/api": [null],
+      },
+      before: [12000, [0]],
+    },
+    "hashed matches beside a hanging link, alone": {
+      feeds: {
+        "/1/api": [
+          9500,
+          hashed(0) + hashed(1) + hashed(2) + linked("/1", 3, "never"),
+        ],
+      },
+      before: [16000, "timeout"],
+      gains: [0, 1, 2],
+    },
+    "a finished match, a feed mid-lookup and a silent feed": {
+      feeds: {
+        "/1/api": [1000, hashed(0)],
+        "/2/api": [3500, hashed(1) + linked("/2", 2, "never")],
+        "/3/api": [null],
+      },
+      before: [12000, [0]],
+      gains: [1],
+    },
+    "a rejected feed and a fast feed": {
+      feeds: { "/1/api": [500, rejected], "/2/api": [2000, hashed(0)] },
+      before: [2000, [0]],
+    },
+    "a rejected feed and a silent feed": {
+      feeds: { "/1/api": [500, rejected], "/2/api": [null] },
+      before: [16000, "error"],
+    },
+    "a late match beside another feed's hanging link": {
+      feeds: {
+        "/1/api": [6000, linked("/1", 0, "never")],
+        "/2/api": [14010, hashed(1) + hashed(2)],
+      },
+      before: [14010, [1, 2]],
+    },
+    "one link resolved and one hanging at twelve seconds": {
+      feeds: {
+        "/1/api": [11000, linked("/1", 1, 300) + linked("/1", 2, "never")],
+        "/2/api": [1000, hashed(0)],
+        "/3/api": [null],
+      },
+      before: [12000, [0]],
+      gains: [1],
+    },
+    "only silent feeds": {
+      feeds: { "/1/api": [null], "/2/api": [null] },
+      before: [16000, "timeout"],
+    },
+    "nothing early and a late feed with a hanging link": {
+      feeds: {
+        "/1/api": [1000, ""],
+        "/2/api": [15000, hashed(0) + linked("/2", 1, "never")],
+      },
+      before: [16000, "timeout"],
+      gains: [0],
+    },
+    "a hash shared by a finished and an unfinished feed": {
+      feeds: {
+        "/1/api": [1000, hashed(0) + hashed(1)],
+        "/2/api": [4000, hashed(1) + hashed(2) + linked("/2", 3, "never")],
+        "/3/api": [null],
+      },
+      before: [12000, [0, 1]],
+      gains: [2],
+    },
+    "finished feeds with nothing matching": {
+      feeds: {
+        "/1/api": [500, ""],
+        "/2/api": [800, hashed(0, "Another Book")],
+      },
+      before: [800, []],
+    },
+    "a rejected feed beside a late feed with a hanging link": {
+      feeds: {
+        "/1/api": [500, rejected],
+        "/2/api": [13000, hashed(0) + linked("/2", 1, "never")],
+      },
+      before: [16000, "error"],
+      gains: [0],
+    },
+  };
+  test("collection ends when it did before and returns at least what it did, in the same order", async () => {
+    await Promise.all(
+      Object.entries(scenarios).map(async ([name, scenario]) => {
+        const [endedAt, releases] = scenario.before;
+        const run = await timeline(scenario.feeds);
+        assert(
+          Math.abs(run.endedAt - endedAt) < 50,
+          `${name}: ended at ${run.endedAt}ms, not ${endedAt}ms`,
+        );
+        const kept = typeof releases === "string" ? [] : releases;
+        if (kept.length || scenario.gains || typeof releases !== "string")
+          assert.deepEqual(
+            run.releases,
+            [...kept, ...(scenario.gains ?? [])],
+            name,
+          );
+        else {
+          assert(run.releases instanceof Error, name);
+          assert.equal(run.releases.kind, releases, name);
+        }
+      }),
+    );
+  });
 });

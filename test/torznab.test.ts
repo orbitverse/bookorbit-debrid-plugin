@@ -46,12 +46,25 @@ function fixture(items: string, reply: PluginHost["fetch"]) {
     },
     fail: (kind, message) => Object.assign(Error(message), { kind }),
   };
-  const run = (signal?: AbortSignal, path = endpoint) =>
-    Effect.runPromise(
-      searchFeeds(key, query)(path).pipe(Effect.provideService(Network, host)),
+  // What the feed reported, one entry per report: the hashes it made known, and for the feed's
+  // answer the number of link lookups it said were still to come.
+  const reports: { hashes: string[]; lookups?: number }[] = [];
+  const run = (signal?: AbortSignal, path = endpoint) => {
+    const found: { hash: string }[] = [];
+    const report = (items: readonly { hash: string }[], lookups?: number) =>
+      Effect.sync(() => {
+        found.push(...items);
+        reports.push({ hashes: items.map((item) => item.hash), lookups });
+      });
+    return Effect.runPromise(
+      searchFeeds(key, query)(path, {
+        answered: report,
+        lookedUp: report,
+      }).pipe(Effect.provideService(Network, host), Effect.as(found)),
       { signal },
     );
-  return { run, calls, warnings };
+  };
+  return { run, calls, warnings, reports };
 }
 
 test("Torznab resolves a same-origin download redirect to a magnet without requesting the magnet", async () => {
@@ -335,4 +348,31 @@ test("caller cancellation cancels metadata response streams", async () => {
   );
   await assert.rejects(f.run(AbortSignal.timeout(30)));
   assert(cancelled);
+});
+
+test("a feed makes its hashed results known in one step and each link when its lookup finishes", async () => {
+  const other = "b".repeat(40);
+  const f = fixture(
+    direct +
+      `<item><title>Book</title><torznab:attr name="infohash" value="${other}"/></item>` +
+      item("/prowlarr/3/download?link=good") +
+      item("/prowlarr/3/download?link=broken"),
+    async (input) =>
+      new URL(input).searchParams.get("link") === "good"
+        ? new Response(torrent())
+        : new Response(null, { status: 500 }),
+  );
+  await f.run();
+  assert.deepEqual(f.reports[0], { hashes: [hash, other], lookups: 2 });
+  // A lookup reports once whether or not it found a hash, so none is left counted as running.
+  assert.deepEqual(
+    f.reports.slice(1).sort((a, b) => a.hashes.length - b.hashes.length),
+    [
+      { hashes: [], lookups: undefined },
+      { hashes: [expected], lookups: undefined },
+    ],
+  );
+  const none = fixture(direct, async () => assert.fail("no link to look up"));
+  await none.run();
+  assert.deepEqual(none.reports, [{ hashes: [hash], lookups: 0 }]);
 });

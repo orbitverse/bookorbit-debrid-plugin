@@ -6,6 +6,7 @@ import { matches } from "./books.js";
 import { magnetHash, metadataLookup } from "./torrent-metadata.js";
 import { fail, type PluginReleaseQuery } from "./model.js";
 import { decode, json, request, Network } from "./http.js";
+import type { Progress } from "./collect.js";
 
 interface Category {
   readonly id: number;
@@ -120,6 +121,7 @@ const searchFeed = Effect.fnUntraced(function* (
   key: string,
   q: PluginReleaseQuery,
   resolveMetadata: ReturnType<typeof metadataLookup>,
+  progress: Progress<Torrent>,
 ) {
   const host = yield* Network;
   const title = host.buildSearchText({ ...q, author: null });
@@ -213,7 +215,7 @@ const searchFeed = Effect.fnUntraced(function* (
         ? (error as ReturnType<typeof fail>)
         : fail("Could not parse Torznab results."),
   });
-  const results: Torrent[] = parsed.flatMap((item) =>
+  const direct: Torrent[] = parsed.flatMap((item) =>
     item.hash ? [{ ...item.torrent, hash: item.hash }] : [],
   );
   const relevant = (torrent: Omit<Torrent, "hash">) =>
@@ -232,23 +234,30 @@ const searchFeed = Effect.fnUntraced(function* (
     host.logger.warn(
       "Torznab: more than four matching results needed a torrent link lookup; the rest were left out.",
     );
+  // Every result that already carries a hash becomes known in one step, together with how many
+  // links are still to be looked up; each lookup then reports once, when it finishes.
+  yield* progress.answered(direct, pending.size);
+  let matched = direct.some(relevant);
   let metadataExpired = false;
   yield* Effect.forEach(
     [...pending],
     ([download, torrents]) =>
       resolveMetadata(download, endpoint).pipe(
         Effect.result,
-        Effect.map((result) => {
-          if (Result.isSuccess(result))
-            for (const torrent of torrents)
-              results.push({ ...torrent, hash: result.success });
-          else
-            host.logger.warn(
-              "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.",
+        Effect.flatMap((result) => {
+          if (Result.isSuccess(result)) {
+            matched = true;
+            return progress.lookedUp(
+              torrents.map((torrent) => ({ ...torrent, hash: result.success })),
             );
+          }
+          host.logger.warn(
+            "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.",
+          );
+          return progress.lookedUp([]);
         }),
       ),
-    { concurrency: 2 },
+    { concurrency: 2, discard: true },
   ).pipe(
     Effect.timeoutOrElse({
       duration: "10 seconds",
@@ -261,17 +270,17 @@ const searchFeed = Effect.fnUntraced(function* (
         }),
     }),
   );
-  if (metadataExpired && !results.some(relevant))
+  if (metadataExpired && !matched)
     return yield* Effect.fail(
       fail(
         "Torznab: matching torrent metadata lookup timed out. Retry later.",
         "timeout",
       ),
     );
-  return results;
 });
 
 export function searchFeeds(key: string, q: PluginReleaseQuery) {
   const resolveMetadata = metadataLookup(key);
-  return (endpoint: string) => searchFeed(endpoint, key, q, resolveMetadata);
+  return (endpoint: string, progress: Progress<Torrent>) =>
+    searchFeed(endpoint, key, q, resolveMetadata, progress);
 }
