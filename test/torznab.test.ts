@@ -368,3 +368,115 @@ test("a feed makes its hashed results known in one step and each link when its l
   await links.run();
   assert.deepEqual(links.reports, [[], [expected]]);
 });
+
+const unresolved =
+  "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.";
+const kindOf = (error: unknown) => {
+  assert(error instanceof Error && "kind" in error && "message" in error);
+  assert(!/SYNTHETIC|apikey|\?|download/.test(error.message), error.message);
+  return error.kind;
+};
+
+test("a feed with nothing known fails when its only torrent link lookup got no answer", async () => {
+  for (const [reply, kind] of [
+    [() => new Response("slow down", { status: 429 }), "throttled"],
+    [() => new Response("down", { status: 500 }), "error"],
+    [() => new Response("down", { status: 503 }), "error"],
+    [() => Promise.reject(Error("connection refused")), "unreachable"],
+  ] as const) {
+    const f = fixture(item("/prowlarr/3/download?link=refused"), async () =>
+      reply(),
+    );
+    await assert.rejects(f.run(), (error) => {
+      assert.equal(kindOf(error), kind);
+      return true;
+    });
+    // The feed request and one lookup: a refused lookup is not retried.
+    assert.equal(f.calls.length, 2);
+    assert.deepEqual(f.warnings, []);
+    assert.deepEqual(f.reports, [[]]);
+  }
+});
+
+test("a feed with nothing known finishes cleanly when every lookup got an answer about its torrent", async () => {
+  for (const reply of [
+    () => new Response("gone", { status: 404 }),
+    () => new Response("gone", { status: 410 }),
+    () => new Response("no", { status: 403 }),
+    () =>
+      new Response("<html>Checking your browser</html>", {
+        headers: { "content-type": "text/html" },
+      }),
+    () => new Response("not a torrent"),
+  ]) {
+    const f = fixture(item("/prowlarr/3/download?link=answered"), async () =>
+      reply(),
+    );
+    assert.deepEqual(await f.run(), []);
+    assert.deepEqual(f.warnings, [unresolved]);
+  }
+});
+
+test("unanswered lookups beside a resolved one are warnings, not a failure", async () => {
+  const f = fixture(
+    item("/prowlarr/3/download?link=good") +
+      item("/prowlarr/3/download?link=a") +
+      item("/prowlarr/3/download?link=b"),
+    async (input) =>
+      new URL(input).searchParams.get("link") === "good"
+        ? new Response(torrent())
+        : new Response("slow down", { status: 429 }),
+  );
+  assert.deepEqual(
+    (await f.run()).map((item) => item.hash),
+    [expected],
+  );
+  assert.deepEqual(f.warnings, [unresolved, unresolved]);
+});
+
+test("the reason a feed fails for does not depend on the order its lookups settle in", async () => {
+  const pause = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+  // Each link is named for how it answers; `last` settles after the others.
+  const feed = (links: readonly string[], last: string) =>
+    fixture(
+      links.map((link) => item(`/prowlarr/3/download?link=${link}`)).join(""),
+      async (input) => {
+        const link = new URL(input).searchParams.get("link")!;
+        if (link === last) await pause(60);
+        if (link === "refused") throw Error("connection refused");
+        return new Response(null, { status: Number(link) });
+      },
+    );
+  // Throttled comes before unreachable and both before a server error, whichever settles last.
+  for (const [links, kind] of [
+    [["429", "refused", "500", "404"], "throttled"],
+    [["refused", "500"], "unreachable"],
+  ] as const)
+    for (const last of links) {
+      const f = feed(links, last);
+      await assert.rejects(f.run(), (error) => {
+        assert.equal(kindOf(error), kind);
+        return true;
+      });
+      assert.deepEqual(f.warnings, []);
+    }
+  // A lookup still unanswered when the budget expires comes before every other reason.
+  const stalled = fixture(
+    item("/prowlarr/3/download?link=429") +
+      item("/prowlarr/3/download?link=stalled"),
+    async (input) =>
+      new URL(input).searchParams.get("link") === "stalled"
+        ? new Promise(() => {})
+        : new Response(null, { status: 429 }),
+  );
+  await assert.rejects(stalled.run(AbortSignal.timeout(12000)), (error) => {
+    assert.equal(kindOf(error), "timeout");
+    assert.equal(
+      (error as Error).message,
+      "Torznab: matching torrent metadata lookup timed out. Retry later.",
+    );
+    return true;
+  });
+  assert.deepEqual(stalled.warnings, []);
+});

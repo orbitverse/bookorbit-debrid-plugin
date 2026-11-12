@@ -857,3 +857,59 @@ test("EasyDebrid plugin omits tracksets that it cannot deliver as a complete ZIP
   );
   assert(!f.calls.some((path) => path.endsWith("generate")));
 });
+
+const hashless = (title = "The Little Prince") =>
+  `<item><title>${title}</title><enclosure type="application/x-bittorrent" url="/2/download?link=opaque"/></item>`;
+/** Feed /2/api holds one matching result without a hash, whose torrent link answers HTTP 429. */
+function refusedLookupFixture(title?: string) {
+  const f = fixture();
+  const fetch = f.host.fetch;
+  const warnings: string[] = [];
+  f.host.logger.warn = (message) => warnings.push(message);
+  f.host.fetch = async (input, init) => {
+    const url = new URL(input);
+    if (url.pathname === "/2/api") return new Response(xml(hashless(title)));
+    if (url.pathname === "/2/download")
+      return new Response("slow down", { status: 429 });
+    return fetch(input, init);
+  };
+  return { host: f.host, warnings };
+}
+const refusedLookup =
+  "/2/api: Torznab: a matching result's torrent link was rate limited (HTTP 429). Retry later.";
+
+test("a refused torrent link lookup fails the search with the feed path instead of an empty list", async () => {
+  const f = refusedLookupFixture();
+  await assert.rejects(
+    plugin.search(
+      q,
+      { ...cfg, settings: { indexerPaths: "/2/api" } },
+      f.host,
+      new AbortController().signal,
+    ),
+    (error) => {
+      assert(error instanceof Error && "kind" in error);
+      assert.equal(error.kind, "throttled");
+      assert.equal(error.message, refusedLookup);
+      return true;
+    },
+  );
+  assert.deepEqual(f.warnings, []);
+  // Beside a feed with a match the same reason is only a warning, with the same prefix.
+  const releases = await plugin.search(
+    q,
+    { ...cfg, settings: { indexerPaths: "/1/api,/2/api" } },
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(releases.length, 1);
+  assert.deepEqual(f.warnings, [refusedLookup]);
+});
+
+test("Test connection with configured paths reports a refused torrent link lookup", async () => {
+  const f = refusedLookupFixture("Pride and Prejudice");
+  assert.deepEqual(
+    await plugin.test({ ...cfg, settings: { indexerPaths: "/2/api" } }, f.host),
+    { success: false, error: refusedLookup },
+  );
+});

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { fail } from "./model.js";
 import { Network } from "./http.js";
 
@@ -149,6 +150,11 @@ function downloadUrl(value: string, endpoint: string, key: string): URL {
   return url;
 }
 
+/** The torrent link gave no answer about the torrent; every other failure is an answer. */
+class Unanswered extends Schema.TaggedError<Unanswered>()("Unanswered", {
+  kind: Schema.Literals(["throttled", "unreachable", "error"]),
+}) {}
+
 const metadataHash = Effect.fnUntraced(function* (
   value: string,
   endpoint: string,
@@ -169,15 +175,22 @@ const metadataHash = Effect.fnUntraced(function* (
         }
         return response;
       },
-      catch: () => fail("Could not retrieve torrent metadata.", "unreachable"),
+      catch: () => new Unanswered({ kind: "unreachable" }),
     });
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      yield* Effect.tryPromise({
-        try: async () => {
-          await response.body?.cancel();
-        },
-        catch: () => fail("Could not release torrent metadata."),
+    const release = Effect.tryPromise({
+      try: async () => {
+        await response.body?.cancel();
+      },
+      catch: () => fail("Could not release torrent metadata."),
+    });
+    if (response.status === 429 || response.status >= 500) {
+      yield* release;
+      return yield* new Unanswered({
+        kind: response.status === 429 ? "throttled" : "error",
       });
+    }
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      yield* release;
       const location = response.headers.get("location");
       const magnet = location && magnetHash(location);
       if (magnet) return magnet;

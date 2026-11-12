@@ -237,7 +237,9 @@ const searchFeed = Effect.fnUntraced(function* (
   // follow when its lookup finishes.
   yield* known(direct);
   let matched = direct.some(relevant);
-  let metadataExpired = false;
+  // Why lookups got no answer about their torrent, and what the feed logs if it does not fail.
+  const unanswered = new Set<string>();
+  const warnings: string[] = [];
   yield* Effect.forEach(
     [...pending],
     ([download, torrents]) =>
@@ -250,7 +252,9 @@ const searchFeed = Effect.fnUntraced(function* (
               torrents.map((torrent) => ({ ...torrent, hash: result.success })),
             );
           }
-          host.logger.warn(
+          if (result.failure._tag === "Unanswered")
+            unanswered.add(result.failure.kind);
+          warnings.push(
             "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.",
           );
           return Effect.void;
@@ -262,20 +266,36 @@ const searchFeed = Effect.fnUntraced(function* (
       duration: "10 seconds",
       orElse: () =>
         Effect.sync(() => {
-          metadataExpired = true;
-          host.logger.warn(
+          unanswered.add("timeout");
+          warnings.push(
             "Torznab: torrent metadata lookup budget expired; completed results remain available.",
           );
         }),
     }),
   );
-  if (metadataExpired && !matched)
+  // The lookups left nothing known and at least one went unanswered: the feed fails with the
+  // first reason in this order, whichever lookup settled first.
+  const reason = matched
+    ? undefined
+    : (
+        [
+          ["timeout", "matching torrent metadata lookup timed out"],
+          [
+            "throttled",
+            "a matching result's torrent link was rate limited (HTTP 429)",
+          ],
+          [
+            "unreachable",
+            "a matching result's torrent link could not be reached",
+          ],
+          ["error", "a matching result's torrent link answered a server error"],
+        ] as const
+      ).find(([kind]) => unanswered.has(kind));
+  if (reason)
     return yield* Effect.fail(
-      fail(
-        "Torznab: matching torrent metadata lookup timed out. Retry later.",
-        "timeout",
-      ),
+      fail(`Torznab: ${reason[1]}. Retry later.`, reason[0]),
     );
+  for (const warning of warnings) host.logger.warn(warning);
 });
 
 export function searchFeeds(key: string, q: PluginReleaseQuery) {
