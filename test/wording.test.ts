@@ -71,9 +71,43 @@ test("Test connection names each provider once, without doubling a word", async 
     assert("indexerName" in configured, JSON.stringify(configured));
     assert.equal(
       configured.indexerName,
-      `BookOrbit Debrid: indexer search and ${name} cache access verified; 0 matching cached releases`,
+      `BookOrbit Debrid: indexer search and ${name} access verified`,
     );
   }
+});
+
+test("Test connection mentions a cached release only when it found one", async () => {
+  const hash = "a".repeat(40);
+  const result = await plugin.test(
+    config("torbox", { indexerPaths: "/1/api" }),
+    {
+      ...host,
+      async fetch(input, init) {
+        const url = new URL(input);
+        if (url.pathname === "/1/api")
+          return new Response(
+            `<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><title>Books</title><item><title>Pride and Prejudice</title><torznab:attr name="infohash" value="${hash}"/></item></channel></rss>`,
+          );
+        if (url.pathname.endsWith("/checkcached"))
+          return Response.json({
+            success: true,
+            data: {
+              [hash]: {
+                hash,
+                name: "Pride and Prejudice",
+                files: [{ name: "Pride and Prejudice.epub", size: 100 }],
+              },
+            },
+          });
+        return host.fetch(input, init);
+      },
+    },
+  );
+  assert("indexerName" in result, JSON.stringify(result));
+  assert.equal(
+    result.indexerName,
+    "BookOrbit Debrid: indexer search and TorBox access verified; a matching cached release was found",
+  );
 });
 
 test("an invalid Show uncached downloads value is reported under the setting's label", async () => {

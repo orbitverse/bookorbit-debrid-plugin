@@ -379,7 +379,8 @@ async function timeline(
   feeds: Feeds,
   link?: (n: number) => Promise<unknown>,
   limit = query.limit,
-  cacheTakes = 0,
+  // How long the provider's cache takes to answer, or "denied" when it rejects the key at once.
+  cacheTakes: number | "denied" = 0,
 ) {
   const warnings: string[] = [],
     asked: number[] = [];
@@ -411,6 +412,7 @@ async function timeline(
       cacheAt = performance.now() - start;
       const hashes = JSON.parse(init!.body!).hashes as string[];
       asked.push(...hashes.map((h) => parseInt(h, 16)));
+      if (cacheTakes === "denied") return new Response(null, { status: 401 });
       await pause(cacheTakes);
       return Response.json({
         success: true,
@@ -591,6 +593,27 @@ describe("when feed collection ends", { concurrency: true }, () => {
     within(slow.elapsed, 17000, 18000);
     assert.deepEqual(quick.releases, [0]);
     assert.deepEqual(quick.warnings, [failure, stillChecking("/2/api")]);
+  });
+
+  test("the provider's own error is a warning beside the feed's failure when it refuses an unfinished feed's match", async () => {
+    const run = await timeline(
+      {
+        "/1/api": [10000, unavailable],
+        "/2/api": [15000, hashed(0) + linked("/2", 1, 5000)],
+      },
+      undefined,
+      query.limit,
+      "denied",
+    );
+    assert(run.releases instanceof Error);
+    assert.equal(
+      run.releases.message,
+      "/1/api: Torznab: HTTP 500. Retry later.",
+    );
+    assert.deepEqual(run.warnings, [
+      "TorBox: access denied. Check the API key.",
+      stoppedWhile("/2/api was"),
+    ]);
   });
 
   test("the collection timeout is the error when the cache is too slow for an unfinished feed's match", async () => {

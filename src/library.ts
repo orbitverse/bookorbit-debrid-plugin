@@ -137,6 +137,10 @@ export const search = Effect.fnUntraced(function* (
   )([...torrents.keys()], account.debrid.key);
   const available = rescue
     ? yield* check.pipe(
+        // The provider's own refusal is worth knowing beside the feeds' problem.
+        Effect.tapError((error) =>
+          Effect.sync(() => host.logger.warn(error.message)),
+        ),
         Effect.timeoutOrElse({
           duration: Math.max(
             0,
@@ -319,6 +323,6 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
   });
   return {
     success: true,
-    indexerName: `BookOrbit Debrid: indexer search and ${name} cache access verified; ${releases.length} matching cached releases`,
+    indexerName: `BookOrbit Debrid: indexer search and ${name} access verified${releases.length ? "; a matching cached release was found" : ""}`,
   };
 });

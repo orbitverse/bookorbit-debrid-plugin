@@ -77,8 +77,11 @@ than the shared cache; accounts with more than 100 entries are not supported.
 Preparation does not guarantee a supported book. Real-Debrid may ask you to
 select files on its website when several book files are available.
 
-Separate ebook formats are kept. TorBox can deliver a numbered audiobook track
-set together as a ZIP; ambiguous archives and mixed book collections are skipped.
+Separate ebook formats are kept. A torrent holding several ebooks can give
+several results with the same title, and they may be different books: check
+each with **View files** before downloading. TorBox can deliver a numbered
+audiobook track set together as a ZIP; ambiguous audiobook archives and mixed
+audiobook collections are skipped.
 If an imported audiobook has incorrect timing or missing chapters, scan its
 library once.
 
