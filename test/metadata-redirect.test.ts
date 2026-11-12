@@ -199,3 +199,43 @@ test("cancelling while a torrent body is being read is a cancellation, not an un
   );
   assert.deepEqual(f.warnings, []);
 });
+
+test("a body that cannot be discarded does not change a lookup the headers already answered", async () => {
+  const warnings: string[] = [];
+  const host: PluginHost = {
+    async fetch(input) {
+      const url = new URL(input);
+      if (url.pathname === "/3/api")
+        return new Response(
+          '<rss><channel><title>Books</title><item><title>Book</title><enclosure url="/3/download?link=book"/></item></channel></rss>',
+        );
+      assert.equal(url.pathname, "/3/download");
+      // Not found, with a body whose cancel() throws instead of returning a promise.
+      return {
+        ok: false,
+        status: 404,
+        headers: new Headers(),
+        body: {
+          cancel() {
+            throw Error("cannot cancel");
+          },
+        },
+      } as unknown as Response;
+    },
+    logger: { log() {}, warn: (message) => warnings.push(message) },
+    buildSearchText: (q) => q.title,
+    async saveCredential() {
+      throw Error("unexpected credential write");
+    },
+    fail: (kind, message) => Object.assign(Error(message), { kind }),
+  };
+  const releases = await plugin.search(
+    query,
+    config,
+    host,
+    AbortSignal.timeout(5000),
+  );
+  assert.deepEqual(releases, []);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /could not be resolved/);
+});

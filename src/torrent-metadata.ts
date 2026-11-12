@@ -189,7 +189,11 @@ const metadataHash = Effect.fnUntraced(function* (
     });
     // The headers alone decided the answer: the body is dropped unread.
     const release = Effect.promise(async () => {
-      await response.body?.cancel().catch(() => {});
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Whether cancel() rejects or throws, the answer the headers gave stands.
+      }
     });
     if (response.status === 429 || response.status >= 500) {
       yield* release;
