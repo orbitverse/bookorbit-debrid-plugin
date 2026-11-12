@@ -142,6 +142,33 @@ test("Real-Debrid rejects truncated inventory and excessive matching detail fano
     await assert.rejects(f.run(RD.prepare(hash, key, context)));
     assert.deepEqual(mutations(f.calls), []);
   }
+  // Distinct, otherwise valid entries for the requested hash: the ninth stops both search and
+  // preparation at the listing, before any detail request.
+  const entries = (length: number) =>
+    fixture({
+      jobs: () => Array.from({ length }, (_, i) => torrent({ id: `rd${i}` })),
+      details: (id) => torrent({ id }),
+    });
+  const tooMany = /matched more than eight Real-Debrid account torrents/;
+  const nine = entries(9);
+  await assert.rejects(nine.run(RD.cached([hash], key)), tooMany);
+  await assert.rejects(nine.run(RD.prepare(hash, key, context)), tooMany);
+  assert.deepEqual(
+    nine.calls.map((c) => c.route),
+    ["torrents", "torrents"],
+  );
+  const eight = entries(8);
+  assert.deepEqual(await eight.run(RD.cached([hash], key)), [
+    { hash, name: "Book", files: selection.files },
+  ]);
+  assert.deepEqual(await eight.run(RD.prepare(hash, key, context)), {
+    status: "ready",
+  });
+  assert.equal(
+    eight.calls.filter((c) => c.route.startsWith("torrents/info/")).length,
+    16,
+  );
+  assert.deepEqual(mutations(eight.calls), []);
 });
 
 test("Real-Debrid rejects under-cap inventory count mismatches before details or preparation", async () => {
@@ -450,28 +477,31 @@ test("a newly added Real-Debrid job that is immediately ready still validates th
 });
 
 test("ambiguous file selection is not repeated after account selected bits change", async () => {
-  let selected = false;
-  const f = fixture({
-    details: () =>
-      torrent({
-        status: selected ? "downloading" : "waiting_files_selection",
-        progress: 0,
-        links: [],
-        files: [{ ...file, selected: selected ? 1 : 0 }],
-      }),
-    select: async () => {
-      selected = true;
-      throw Error("synthetic selection disconnect");
-    },
-  });
-  await assert.rejects(
-    f.run(RD.prepare(hash, key, context)),
-    /selection outcome is uncertain/,
-  );
-  assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
-    status: "preparing",
-  });
-  assert.equal(mutations(f.calls).length, 1);
+  // Whether or not the account has also moved the job on from waiting for a selection.
+  for (const next of ["downloading", "waiting_files_selection"]) {
+    let selected = false;
+    const f = fixture({
+      details: () =>
+        torrent({
+          status: selected ? next : "waiting_files_selection",
+          progress: 0,
+          links: [],
+          files: [{ ...file, selected: selected ? 1 : 0 }],
+        }),
+      select: async () => {
+        selected = true;
+        throw Error("synthetic selection disconnect");
+      },
+    });
+    await assert.rejects(
+      f.run(RD.prepare(hash, key, context)),
+      /selection outcome is uncertain/,
+    );
+    assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
+      status: "preparing",
+    });
+    assert.equal(mutations(f.calls).length, 1);
+  }
 });
 
 test("Real-Debrid rejects a selected nonnumbered chapter when the full manifest has other audio", async () => {
