@@ -274,7 +274,7 @@ const searchFeed = Effect.fnUntraced(function* (
     }),
   );
   // The lookups left nothing known and at least one went unanswered: the feed fails with the
-  // first reason in this order, whichever lookup settled first.
+  // first reason in this order, regardless of the order the lookups settle in.
   const reason = matched
     ? undefined
     : (
