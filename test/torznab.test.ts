@@ -46,21 +46,17 @@ function fixture(items: string, reply: PluginHost["fetch"]) {
     },
     fail: (kind, message) => Object.assign(Error(message), { kind }),
   };
-  // What the feed reported, one entry per report: the hashes it made known, and for the feed's
-  // answer the number of link lookups it said were still to come.
-  const reports: { hashes: string[]; lookups?: number }[] = [];
+  // The hashes the feed made known, one entry each time it did.
+  const reports: string[][] = [];
   const run = (signal?: AbortSignal, path = endpoint) => {
     const found: { hash: string }[] = [];
-    const report = (items: readonly { hash: string }[], lookups?: number) =>
-      Effect.sync(() => {
-        found.push(...items);
-        reports.push({ hashes: items.map((item) => item.hash), lookups });
-      });
     return Effect.runPromise(
-      searchFeeds(key, query)(path, {
-        answered: report,
-        lookedUp: report,
-      }).pipe(Effect.provideService(Network, host), Effect.as(found)),
+      searchFeeds(key, query)(path, (items) =>
+        Effect.sync(() => {
+          found.push(...items);
+          reports.push(items.map((item) => item.hash));
+        }),
+      ).pipe(Effect.provideService(Network, host), Effect.as(found)),
       { signal },
     );
   };
@@ -363,16 +359,12 @@ test("a feed makes its hashed results known in one step and each link when its l
         : new Response(null, { status: 500 }),
   );
   await f.run();
-  assert.deepEqual(f.reports[0], { hashes: [hash, other], lookups: 2 });
-  // A lookup reports once whether or not it found a hash, so none is left counted as running.
-  assert.deepEqual(
-    f.reports.slice(1).sort((a, b) => a.hashes.length - b.hashes.length),
-    [
-      { hashes: [], lookups: undefined },
-      { hashes: [expected], lookups: undefined },
-    ],
+  assert.deepEqual(f.reports, [[hash, other], [expected]]);
+  // A feed with nothing to make known yet still says that it has answered.
+  const links = fixture(
+    item("/prowlarr/3/download?link=good"),
+    async () => new Response(torrent()),
   );
-  const none = fixture(direct, async () => assert.fail("no link to look up"));
-  await none.run();
-  assert.deepEqual(none.reports, [{ hashes: [hash], lookups: 0 }]);
+  await links.run();
+  assert.deepEqual(links.reports, [[], [expected]]);
 });

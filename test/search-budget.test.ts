@@ -362,6 +362,10 @@ const hashed = (n: number, title = "The Little Prince Audiobook") =>
 const linked = (feedPath: string, n: number, delay: number | "never") =>
   `<item><title>The Little Prince Audiobook</title><enclosure type="application/x-bittorrent" url="${feedPath}/download?link=${n}-${delay}"/></item>`;
 const never = () => new Promise<never>(() => {});
+/** In place of a feed's items: the feed answers HTTP 500. */
+const unavailable = "HTTP 500";
+const stoppedWhile = (checking: string) =>
+  `Indexer search stopped while ${checking} still checking torrent links.`;
 const waitingFor = (paths: string) =>
   `Indexer search timed out waiting for ${paths}. Retry shortly; the first search after a restart can be slow.`;
 const stillChecking = (paths: string) =>
@@ -375,6 +379,7 @@ async function timeline(
   feeds: Feeds,
   link?: (n: number) => Promise<unknown>,
   limit = query.limit,
+  cacheTakes = 0,
 ) {
   const warnings: string[] = [],
     asked: number[] = [];
@@ -389,7 +394,9 @@ async function timeline(
       if (answer) {
         if (answer[0] === null) return never();
         await pause(answer[0]);
-        return feed(answer[1]);
+        return answer[1] === unavailable
+          ? new Response(null, { status: 500 })
+          : feed(answer[1]);
       }
       if (url.pathname.endsWith("/download")) {
         const [n, delay] = url.searchParams.get("link")!.split("-");
@@ -404,6 +411,7 @@ async function timeline(
       cacheAt = performance.now() - start;
       const hashes = JSON.parse(init!.body!).hashes as string[];
       asked.push(...hashes.map((h) => parseInt(h, 16)));
+      await pause(cacheTakes);
       return Response.json({
         success: true,
         data: Object.fromEntries(
@@ -561,6 +569,77 @@ describe("when feed collection ends", { concurrency: true }, () => {
     assert.deepEqual(run.releases, [0]);
     assert.deepEqual(run.warnings, [waitingFor("/2/api")]);
     within(run.elapsed, 11900, 13000);
+  });
+
+  // From here on: the search ends in an error although some feed had answered and was still
+  // checking links. The cap on the whole search is eighteen seconds.
+  test("a feed's failure is the error when the cache is too slow for an unfinished feed's match", async () => {
+    const feeds: Feeds = {
+      "/1/api": [10000, unavailable],
+      "/2/api": [15000, hashed(0) + linked("/2", 1, 5000)],
+    };
+    const failure = "/1/api: Torznab: HTTP 500. Retry later.";
+    const [slow, quick] = await Promise.all([
+      timeline(feeds, undefined, query.limit, 2500),
+      timeline(feeds, undefined, query.limit, 300),
+    ]);
+    assert(slow.releases instanceof Error);
+    assert.equal(slow.releases.message, failure);
+    assert.deepEqual(slow.asked, [0]);
+    assert.deepEqual(slow.warnings, [stoppedWhile("/2/api was")]);
+    within(slow.endedAt, 15950, 16050);
+    within(slow.elapsed, 17000, 18000);
+    assert.deepEqual(quick.releases, [0]);
+    assert.deepEqual(quick.warnings, [failure, stillChecking("/2/api")]);
+  });
+
+  test("the collection timeout is the error when the cache is too slow for an unfinished feed's match", async () => {
+    const run = await timeline(
+      {
+        "/1/api": [null],
+        "/2/api": [15000, hashed(0) + linked("/2", 1, 5000)],
+      },
+      undefined,
+      query.limit,
+      2500,
+    );
+    assert(run.releases instanceof Error);
+    assert.equal(run.releases.kind, "timeout");
+    assert.equal(run.releases.message, waitingFor("/1/api"));
+    assert.deepEqual(run.warnings, [
+      waitingFor("/1/api"),
+      stoppedWhile("/2/api was"),
+    ]);
+    within(run.elapsed, 17000, 18000);
+  });
+
+  test("a timeout naming a silent feed leaves the feeds still checking links to a warning", async () => {
+    const run = await timeline({
+      "/1/api": [null],
+      "/2/api": [7000, linked("/2", 0, "never")],
+      "/3/api": [8000, linked("/3", 1, "never")],
+    });
+    assert(run.releases instanceof Error);
+    assert.equal(run.releases.message, waitingFor("/1/api"));
+    assert.deepEqual(run.warnings, [
+      waitingFor("/1/api"),
+      stoppedWhile("/2/api, /3/api were"),
+    ]);
+    within(run.elapsed, 15950, 17000);
+  });
+
+  test("a feed's failure is reported once, beside the feed still checking links", async () => {
+    const run = await timeline({
+      "/1/api": [500, "<error/>"],
+      "/2/api": [7000, linked("/2", 0, "never")],
+    });
+    assert(run.releases instanceof Error);
+    assert.equal(
+      run.releases.message,
+      "/1/api: Torznab rejected the search. Check the API key and indexer settings.",
+    );
+    assert.deepEqual(run.warnings, [stoppedWhile("/2/api was")]);
+    within(run.elapsed, 15950, 17000);
   });
 
   // `before` is what the search did before it used what unfinished feeds knew, recorded by running

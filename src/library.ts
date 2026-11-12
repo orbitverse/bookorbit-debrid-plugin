@@ -75,29 +75,47 @@ export const search = Effect.fnUntraced(function* (
   }));
   const paths = (named: typeof feeds) =>
     named.map((feed) => feed.path).join(", ");
-  const unfinished = feeds.filter((feed) => feed.stage !== "finished");
   const unanswered = feeds.filter((feed) => feed.stage === "waiting");
-  const checkingLinks = feeds.filter((feed) => feed.lookups > 0);
-  const collectionTimeout = () =>
-    fail(
-      unanswered.length
-        ? `Indexer search timed out waiting for ${paths(unanswered)}. Retry shortly; the first search after a restart can be slow.`
-        : `Indexer search timed out while ${paths(unfinished)} was still checking torrent links. Retry shortly; the first search after a restart can be slow.`,
-      "timeout",
-    );
-  if (unanswered.length) host.logger.warn(collectionTimeout().message);
+  const checking = feeds.filter((feed) => feed.stage === "answered");
+  const stillChecking = `${paths(checking)} ${checking.length === 1 ? "was" : "were"} still checking torrent links`;
+  const retry = "Retry shortly; the first search after a restart can be slow.";
+  const waiting = `Indexer search timed out waiting for ${paths(unanswered)}. ${retry}`;
   const failures = feeds.flatMap((feed) =>
     feed.failure
       ? [fail(`${feed.path}: ${feed.failure.message}`, feed.failure.kind)]
       : [],
   );
-  if (failures.length + unanswered.length === feeds.length)
-    return yield* Effect.fail(failures[0] ?? collectionTimeout());
-  for (const failure of failures) host.logger.warn(failure.message);
+  // What the search fails with when the feeds that finished leave nothing to check.
+  const problem =
+    failures[0] ??
+    (unanswered.length
+      ? fail(waiting, "timeout")
+      : checking.length
+        ? fail(
+            `Indexer search timed out while ${stillChecking}. ${retry}`,
+            "timeout",
+          )
+        : undefined);
+  /** Names every feed that did not finish or failed, once; `error` is what the search fails with. */
+  const report = (error?: ReturnType<typeof fail>) => {
+    if (unanswered.length) host.logger.warn(waiting);
+    for (const failure of failures)
+      if (failure !== error) host.logger.warn(failure.message);
+    // The same feeds are not named twice when their sentence is the error itself.
+    if (checking.length && !(error && !failures.length && !unanswered.length))
+      host.logger.warn(
+        `Indexer search stopped while ${stillChecking}${error ? "" : "; matches already identified remain available"}.`,
+      );
+  };
+  const stop = (error: ReturnType<typeof fail>) => {
+    report(error);
+    return Effect.fail(error);
+  };
   const torrents = new Map<string, (typeof feeds)[number]["known"][number]>();
   // Feeds that finished come first, interleaved before the cache-check ceiling applies. What
   // unfinished feeds already knew follows, so it never displaces or reorders a finished feed's.
-  for (const finished of [true, false])
+  let fromFinished = 0;
+  for (const finished of [true, false]) {
     for (let i = 0; i < 50; i++)
       for (const feed of feeds) {
         const t = feed.known[i];
@@ -106,18 +124,29 @@ export const search = Effect.fnUntraced(function* (
         if (torrents.size < 100 && (finished || !torrents.has(t.hash)))
           torrents.set(t.hash, t);
       }
-  if (!torrents.size) {
-    if (failures.length || unfinished.length)
-      return yield* Effect.fail(failures[0] ?? collectionTimeout());
-    return [];
+    if (finished) fromFinished = torrents.size;
   }
-  if (checkingLinks.length)
-    host.logger.warn(
-      `Indexer search stopped while ${paths(checkingLinks)} was still checking torrent links; matches already identified remain available.`,
-    );
-  const available = yield* (
+  if (!torrents.size) return problem ? yield* stop(problem) : [];
+  // With matches only from feeds that had not finished, collection ran to its last moment. The
+  // cache then gets what is left of the search, and the feeds' own problem is the answer if the
+  // cache has nothing in that time.
+  const rescue = fromFinished ? undefined : problem;
+  if (!rescue) report();
+  const check = (
     prepareUncached && service.available ? service.available : service.cached
   )([...torrents.keys()], account.debrid.key);
+  const available = rescue
+    ? yield* check.pipe(
+        Effect.timeoutOrElse({
+          duration: Math.max(
+            0,
+            17750 - ((yield* Clock.currentTimeMillis) - started),
+          ),
+          orElse: () => Effect.fail(rescue),
+        }),
+        Effect.catch(() => stop(rescue)),
+      )
+    : yield* check;
   const releases: PluginReleaseCandidate[] = [];
   for (const item of available) {
     const t = torrents.get(item.hash)!;
@@ -173,6 +202,10 @@ export const search = Effect.fnUntraced(function* (
       // A failed automatic grab may try the next result: offer at most one preparation.
       break;
     }
+  }
+  if (rescue) {
+    if (!releases.length) return yield* stop(rescue);
+    report();
   }
   return releases.slice(0, Math.max(1, Math.min(q.limit, 100)));
 });

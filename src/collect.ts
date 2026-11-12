@@ -2,34 +2,28 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
-/** How a source tells the collection what it knows while it is still working. */
-export interface Progress<A> {
-  /** The source has answered: `items` are known now, and `lookups` more are still being looked up. */
-  readonly answered: (
-    items: readonly A[],
-    lookups: number,
-  ) => Effect.Effect<void>;
-  /** One of those lookups has finished, with whatever it found. */
-  readonly lookedUp: (items: readonly A[]) => Effect.Effect<void>;
-}
-
 /**
- * Runs `work` for every source concurrently and returns, in source order, what each one had
- * reported when collection ended: the items it knows, how far it got, how many of its lookups
- * were still running, and its failure if it failed.
+ * Runs `work` for every source concurrently and returns, in source order, what each one had made
+ * known when collection ended, how far it got, and its failure if it failed.
+ *
+ * A source calls `known` with items as it learns them, first when it has answered (with none, if
+ * it has none yet) and again whenever it learns more.
  *
  * Collection ends when every source has finished. Once `softMs` has passed it also ends as soon
  * as a source that finished without failing knows an item that `matches`, and at `hardMs` it ends
  * regardless. Until `softMs` collection therefore waits for every source; only after it does a
  * slow source stop delaying an answer that is already there.
  *
- * Only a source finishing or a clock passing can end collection. What a source reports on the
- * way is recorded whole and never ends it, and nothing is recorded once it has ended. Sources
- * still running at that moment are interrupted; what they had reported is kept.
+ * Only a source finishing or a clock passing can end collection. What a source makes known on
+ * the way is recorded whole and never ends it, and nothing is recorded once it has ended. Sources
+ * still running at that moment are interrupted; what they had made known is kept.
  */
 export const collect = Effect.fnUntraced(function* <S, A, E, R>(
   sources: readonly S[],
-  work: (source: S, progress: Progress<A>) => Effect.Effect<void, E, R>,
+  work: (
+    source: S,
+    known: (items: readonly A[]) => Effect.Effect<void>,
+  ) => Effect.Effect<void, E, R>,
   options: {
     readonly softMs: number;
     readonly hardMs: number;
@@ -40,18 +34,12 @@ export const collect = Effect.fnUntraced(function* <S, A, E, R>(
     (): {
       known: A[];
       stage: "waiting" | "answered" | "finished";
-      lookups: number;
       failure?: E;
-    } => ({ known: [], stage: "waiting", lookups: 0 }),
+    } => ({ known: [], stage: "waiting" }),
   );
   const enough = yield* Deferred.make<void>();
   let softPassed = false;
   let closed = false;
-  /** Records what a source reports while it works. */
-  const note = (change: () => void) =>
-    Effect.sync(() => {
-      if (!closed) change();
-    });
   /** Records a source finishing or the soft clock passing, then ends collection if it may. */
   const settle = (change: () => void) =>
     Effect.suspend(() => {
@@ -73,24 +61,17 @@ export const collect = Effect.fnUntraced(function* <S, A, E, R>(
     sources,
     (source, index) => {
       const mine = state[index];
-      return work(source, {
-        answered: (items, lookups) =>
-          note(() => {
-            mine.known.push(...items);
-            mine.stage = "answered";
-            mine.lookups = lookups;
-          }),
-        lookedUp: (items) =>
-          note(() => {
-            mine.known.push(...items);
-            mine.lookups--;
-          }),
-      }).pipe(
+      return work(source, (items) =>
+        Effect.sync(() => {
+          if (closed) return;
+          mine.known.push(...items);
+          mine.stage = "answered";
+        }),
+      ).pipe(
         Effect.result,
         Effect.flatMap((outcome) =>
           settle(() => {
             mine.stage = "finished";
-            mine.lookups = 0;
             if (Result.isFailure(outcome)) mine.failure = outcome.failure;
           }),
         ),
