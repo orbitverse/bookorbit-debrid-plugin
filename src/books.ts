@@ -25,6 +25,39 @@ export function matches(title: string, value: string): boolean {
   );
 }
 
+const teaser = (s: string) => / (?:sample|preview) /.test(` ${normalize(s)} `);
+// Of one format's files whose path matches the title, the ones to offer. A
+// sample gives way to a full file, and files named exactly for the title,
+// nothing more and nothing less, are the book. Otherwise every file stays:
+// nothing is dropped on a guess.
+function requested(files: readonly File[], title: string): readonly File[] {
+  const spell = (s: string) =>
+    ["", " "].map((a) => words(s.replace(/&/g, " and "), a).join(" "));
+  const stem = (f: File) => f.name.replace(/^.*[\\/]|\.[^.]+$/g, "");
+  const full = teaser(title) ? [] : files.filter((f) => !teaser(stem(f)));
+  const books = full.length ? full : files;
+  const exact = books.filter((f) =>
+    spell(stem(f)).some((name) => spell(title).includes(name)),
+  );
+  return exact.length ? exact : books;
+}
+const selectEbooks = (files: readonly File[], title: string) => {
+  const found = files.filter(
+    (f) => ebook.has(extension(f.name)) && matches(title, f.name),
+  );
+  const kept = new Set(
+    [...ebook].flatMap((format) =>
+      requested(
+        found.filter((f) => extension(f.name) === format),
+        title,
+      ),
+    ),
+  );
+  return found
+    .filter((f) => kept.has(f))
+    .map((f) => ({ files: [f], format: extension(f.name) }));
+};
+
 export function selectFiles(
   files: readonly File[],
   q: Pick<PluginReleaseQuery, "title" | "mediaKind">,
@@ -35,10 +68,7 @@ export function selectFiles(
     files.some((f) => /(?:^|[\\/])\.\.(?:[\\/]|$)|[\x00-\x1f]/.test(f.name))
   )
     return [];
-  if (q.mediaKind === "ebook")
-    return files
-      .filter((f) => ebook.has(extension(f.name)) && matches(q.title, f.name))
-      .map((f) => ({ files: [f], format: extension(f.name) }));
+  if (q.mediaKind === "ebook") return selectEbooks(files, q.title);
   const tracks = files.filter((f) => isAudioFile(f.name));
   if (!tracks.length) return [];
   if (tracks.length === 1) {
