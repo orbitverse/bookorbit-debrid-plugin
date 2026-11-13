@@ -5,7 +5,7 @@ BookOrbit downloads the files directly from your provider.
 
 Use TorBox, EasyDebrid, Real-Debrid or Debrid-Link.
 
-Only download content you are authorized to access. 
+Only download content you are authorized to access.
 
 ## Install
 
