@@ -497,3 +497,50 @@ for (const [name, torrentTitle, names, wanted] of bundles)
     assert.deepEqual(requested, [String(names.indexOf(wanted) + 10)]);
     assert.equal(result.sizeBytes, 9000 - names.indexOf(wanted));
   });
+
+test("several books of one format from one torrent are told apart by file name", async () => {
+  const pack = [
+    "Dune Saga/Frank Herbert - Dune.epub",
+    "Dune Saga/Frank Herbert - Dune Messiah.epub",
+    "Dune Saga/Frank Herbert - Children of Dune.epub",
+    "Dune Saga/Frank Herbert - Dune.mobi",
+  ];
+  const host: PluginHost = {
+    async fetch(input) {
+      const url = new URL(input);
+      if (url.hostname === "prowlarr.example")
+        return new Response(
+          `<?xml version="1.0"?><rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><title>Book indexer</title><item><title>Dune Saga</title><torznab:attr name="infohash" value="${hash}"/></item></channel></rss>`,
+        );
+      return json({
+        [hash]: {
+          hash,
+          name: "Dune Saga",
+          files: pack.map((name, i) => ({ name, size: 9000 - i })),
+        },
+      });
+    },
+    logger: { log() {}, warn() {} },
+    buildSearchText: (q) => q.title,
+    async saveCredential() {
+      throw Error("Unexpected credential write");
+    },
+    fail: (kind, message) => Object.assign(new Error(message), { kind }),
+  };
+  const releases = await plugin.search(
+    query,
+    cfg,
+    host,
+    new AbortController().signal,
+  );
+  assert.deepEqual(
+    releases.map((release) => release.title),
+    [
+      "Frank Herbert - Dune · Dune Saga · EPUB · Book indexer · TorBox",
+      "Frank Herbert - Dune Messiah · Dune Saga · EPUB · Book indexer · TorBox",
+      "Frank Herbert - Children of Dune · Dune Saga · EPUB · Book indexer · TorBox",
+      // The only file of its format keeps the plain title.
+      "Dune Saga · MOBI · Book indexer · TorBox",
+    ],
+  );
+});

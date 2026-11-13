@@ -42,6 +42,19 @@ const prepare = (cfg: PluginIndexerConfig) =>
         : fail("Invalid source configuration."),
   });
 
+// A torrent that gives several results of one format names each result's file, or they look alike.
+const fileLabel = (
+  selections: ReturnType<typeof selectFiles>,
+  selected: ReturnType<typeof selectFiles>[number],
+) =>
+  selections.filter((other) => other.format === selected.format).length > 1
+    ? `${selected.files[0].name
+        .split(/[\\/]/)
+        .pop()!
+        .replace(/\.[^.]+$/, "")
+        .slice(0, 200)} · `
+    : "";
+
 export const search = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   cfg: PluginIndexerConfig,
@@ -154,7 +167,8 @@ export const search = Effect.fnUntraced(function* (
   const releases: PluginReleaseCandidate[] = [];
   for (const item of available) {
     const t = torrents.get(item.hash)!;
-    for (const selected of selectFiles(item.files, { ...q, title })) {
+    const selections = selectFiles(item.files, { ...q, title });
+    for (const selected of selections) {
       if (selected.format === "zip" && !service.supportsZip) continue;
       const value: Selection = {
         provider: account.debrid.provider,
@@ -171,7 +185,7 @@ export const search = Effect.fnUntraced(function* (
       if (sizeBytes > 8 * 1024 ** 3) continue;
       releases.push({
         guid,
-        title: `${t.title} · ${selected.format.toUpperCase()} · ${t.indexer} · ${service.label}`,
+        title: `${fileLabel(selections, selected)}${t.title} · ${selected.format.toUpperCase()} · ${t.indexer} · ${service.label}`,
         author: t.author,
         language: t.language,
         format: selected.format,
