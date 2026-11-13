@@ -58,6 +58,8 @@ const fileLabel = (
 export const search = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   cfg: PluginIndexerConfig,
+  /** Fail unless every feed answered without failing. Only Test connection asks for this. */
+  everyFeed = false,
 ) {
   const {
     account,
@@ -98,6 +100,15 @@ export const search = Effect.fnUntraced(function* (
       ? [fail(`${feed.path}: ${feed.failure.message}`, feed.failure.kind)]
       : [],
   );
+  // Test connection vouches for each configured feed, so a match elsewhere does not excuse one.
+  const broken = [
+    ...failures.map((failure) => failure.message),
+    ...(unanswered.length ? [waiting] : []),
+  ];
+  if (everyFeed && broken.length)
+    return yield* Effect.fail(
+      fail(broken.join(" "), failures[0]?.kind ?? "timeout"),
+    );
   // What the search fails with when the feeds that finished leave nothing to check.
   const problem =
     failures[0] ??
@@ -331,10 +342,11 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
     language: "en",
     limit: 1,
   };
-  const releases = yield* search(q, {
-    ...cfg,
-    settings: { ...cfg.settings, prepareUncached: false },
-  });
+  const releases = yield* search(
+    q,
+    { ...cfg, settings: { ...cfg.settings, prepareUncached: false } },
+    true,
+  );
   return {
     success: true,
     indexerName: `BookOrbit Debrid: indexer search and ${name} access verified${releases.length ? "; a matching cached release was found" : ""}`,

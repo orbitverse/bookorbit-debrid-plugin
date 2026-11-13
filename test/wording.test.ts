@@ -123,3 +123,152 @@ test("an invalid Show uncached downloads value is reported under the setting's l
   assert("error" in result);
   assert.equal(result.error, `${label} must be enabled or disabled.`);
 });
+
+const prideHash = "c".repeat(40);
+const pride = `<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><title>Books</title><item><title>Pride and Prejudice</title><torznab:attr name="infohash" value="${prideHash}"/></item></channel></rss>`;
+const empty = "<rss><channel><title>Books</title></channel></rss>";
+const twoPaths = config("torbox", { indexerPaths: "/1/api,/2/api" });
+const verified = "BookOrbit Debrid: indexer search and TorBox access verified";
+/** Two configured feeds, each answered by its own function; TorBox holds the matching ebook. */
+function twoFeeds(feeds: Record<string, () => Response | Promise<Response>>) {
+  const warnings: string[] = [];
+  const twoFeedHost: PluginHost = {
+    ...host,
+    async fetch(input, init) {
+      const url = new URL(input);
+      if (feeds[url.pathname]) return feeds[url.pathname]();
+      if (url.pathname.endsWith("/checkcached"))
+        return Response.json({
+          success: true,
+          data: {
+            [prideHash]: {
+              hash: prideHash,
+              name: "Pride and Prejudice",
+              files: [{ name: "Pride and Prejudice.epub", size: 100 }],
+            },
+          },
+        });
+      return host.fetch(input, init);
+    },
+    logger: { log() {}, warn: (message) => warnings.push(message) },
+  };
+  return { host: twoFeedHost, warnings };
+}
+
+test("Test connection fails on a configured feed that failed, although another feed holds a match", async () => {
+  const feeds = {
+    "/1/api": () => new Response("down", { status: 500 }),
+    "/2/api": () => new Response(pride),
+  };
+  assert.deepEqual(await plugin.test(twoPaths, twoFeeds(feeds).host), {
+    success: false,
+    error: "/1/api: Torznab: HTTP 500. Retry later.",
+  });
+  // The same feeds through a search: the match is returned and the failure is only a warning.
+  const f = twoFeeds(feeds);
+  const releases = await plugin.search(
+    {
+      title: "Pride and Prejudice",
+      author: "Jane Austen",
+      isbn13: null,
+      isbn13s: [],
+      mediaKind: "ebook",
+      language: "en",
+      limit: 20,
+    },
+    twoPaths,
+    f.host,
+    new AbortController().signal,
+  );
+  assert.deepEqual(
+    releases.map((release) => [release.title, release.format]),
+    [["Pride and Prejudice · EPUB · Books · TorBox", "epub"]],
+  );
+  assert.deepEqual(f.warnings, ["/1/api: Torznab: HTTP 500. Retry later."]);
+});
+
+test("Test connection names every configured feed that failed", async () => {
+  assert.deepEqual(
+    await plugin.test(
+      twoPaths,
+      twoFeeds({
+        "/1/api": () => new Response("down", { status: 500 }),
+        "/2/api": () => new Response("<html>Sign in</html>"),
+      }).host,
+    ),
+    {
+      success: false,
+      error:
+        "/1/api: Torznab: HTTP 500. Retry later. /2/api: Not a Torznab feed. Use an indexer's API path, not the web interface.",
+    },
+  );
+});
+
+// Collection waits twelve seconds for every feed before a match elsewhere may end it, so this
+// takes twelve seconds: inside the eighteen the whole test is given.
+test("Test connection fails on a configured feed that never answered, although another feed holds a match", async () => {
+  const start = performance.now();
+  assert.deepEqual(
+    await plugin.test(
+      twoPaths,
+      twoFeeds({
+        "/1/api": () => new Promise<Response>(() => {}),
+        "/2/api": () => new Response(pride),
+      }).host,
+    ),
+    {
+      success: false,
+      error:
+        "Indexer search timed out waiting for /1/api. Retry shortly; the first search after a restart can be slow.",
+    },
+  );
+  assert(performance.now() - start < 13000);
+});
+
+// Feed 1 answers after four seconds and its lookup has ten more, so it is still checking when
+// the match in feed 2 ends collection at twelve.
+test("Test connection passes when a feed that answered is still checking a torrent link", async () => {
+  const f = twoFeeds({
+    "/1/api": async () => {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      return new Response(
+        '<rss><channel><title>Books</title><item><title>Pride and Prejudice</title><enclosure type="application/x-bittorrent" url="/1/download?link=opaque"/></item></channel></rss>',
+      );
+    },
+    "/1/download": () => new Promise<Response>(() => {}),
+    "/2/api": () => new Response(pride),
+  });
+  assert.deepEqual(await plugin.test(twoPaths, f.host), {
+    success: true,
+    indexerName: `${verified}; a matching cached release was found`,
+  });
+  assert.deepEqual(f.warnings, [
+    "Indexer search stopped while /1/api was still checking torrent links; matches already identified remain available.",
+  ]);
+});
+
+test("Test connection with two working feeds mentions a cached release only when one holds a match", async () => {
+  assert.deepEqual(
+    await plugin.test(
+      twoPaths,
+      twoFeeds({
+        "/1/api": () => new Response(empty),
+        "/2/api": () => new Response(pride),
+      }).host,
+    ),
+    {
+      success: true,
+      indexerName: `${verified}; a matching cached release was found`,
+    },
+  );
+  assert.deepEqual(
+    await plugin.test(
+      twoPaths,
+      twoFeeds({
+        "/1/api": () => new Response(empty),
+        "/2/api": () => new Response(empty),
+      }).host,
+    ),
+    { success: true, indexerName: verified },
+  );
+});
