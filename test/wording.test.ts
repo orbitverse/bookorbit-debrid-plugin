@@ -403,7 +403,7 @@ test("Test connection waits for a slow feed although another feed holds a match"
 test("Test connection reports a provider failure at once, in preference to a feed's", async () => {
   const f = twoFeeds({
     "/1/api": () => new Response("down", { status: 500 }),
-    "/2/api": () => new Promise<Response>(() => {}),
+    "/2/api": () => new Response("down", { status: 500 }),
   });
   const start = performance.now();
   const result = await plugin.test(twoPaths, {
