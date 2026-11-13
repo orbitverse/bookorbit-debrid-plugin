@@ -120,6 +120,6 @@ export const config = (cfg: PluginIndexerConfig) => {
   });
   const prepareUncached = cfg.settings?.prepareUncached ?? false;
   if (typeof prepareUncached !== "boolean")
-    throw fail("Show uncached torrents must be enabled or disabled.");
+    throw fail("Show uncached downloads must be enabled or disabled.");
   return { account, endpoints, baseUrl: base.href, prepareUncached };
 };

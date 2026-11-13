@@ -40,24 +40,41 @@ export const discover = Effect.fnUntraced(function* (
   mediaKinds: readonly PluginReleaseQuery["mediaKind"][],
 ) {
   const base = baseUrl.replace(/\/+$/, "") + "/";
-  const response = yield* request(
+  // One limit covers the request and reading its body, so feeds always keep part of the search
+  // and a slow discovery reads the same whichever part stalled. The request's own limit is set
+  // beyond it so that this is the only deadline.
+  const body = yield* request(
     new URL("api/v1/indexer", base).href,
     "Prowlarr",
     {
       headers: { "X-Api-Key": key },
     },
+    true,
+    "17 seconds",
+  ).pipe(
+    Effect.flatMap(json),
+    Effect.timeoutOrElse({
+      duration: "12 seconds",
+      orElse: () =>
+        Effect.fail(
+          fail(
+            "Prowlarr: indexer discovery timed out. Retry shortly; the first request after a restart can be slow.",
+            "timeout",
+          ),
+        ),
+    }),
   );
   const indexers = yield* decode(
     Schema.Array(Indexer),
-    yield* json(response),
+    body,
     "Prowlarr indexers",
   );
-  const categories = new Set<number>(
-    mediaKinds.map((kind) => (kind === "audiobook" ? 3030 : 7020)),
-  );
-  const supports = (tree: readonly Category[]): boolean =>
-    tree.some((c) => categories.has(c.id) || supports(c.subCategories ?? []));
-  const ids = [
+  const supports = (tree: readonly Category[], category: number): boolean =>
+    tree.some(
+      (c) => c.id === category || supports(c.subCategories ?? [], category),
+    );
+  // Each media kind is searched on its own, so each is counted on its own.
+  const perKind = mediaKinds.map((kind) => [
     ...new Set(
       indexers
         .filter(
@@ -66,24 +83,29 @@ export const discover = Effect.fnUntraced(function* (
             i.supportsSearch === true &&
             i.protocol === "torrent" &&
             i.privacy === "public" &&
-            supports(i.capabilities?.categories ?? []),
+            supports(
+              i.capabilities?.categories ?? [],
+              kind === "audiobook" ? 3030 : 7020,
+            ),
         )
         .map((i) => i.id),
     ),
-  ];
-  if (!ids.length)
+  ]);
+  if (perKind.every((ids) => !ids.length))
     return yield* Effect.fail(
       fail(
         `No enabled public ${mediaKinds.length === 1 ? mediaKinds[0] : "ebook or audiobook"} indexers found in Prowlarr. Add one with the matching category, or enter Torznab API paths for another server.`,
       ),
     );
-  if (ids.length > 8)
+  if (perKind.some((ids) => ids.length > 8))
     return yield* Effect.fail(
       fail(
         "More than eight matching public indexers found. Choose up to eight using Torznab API paths.",
       ),
     );
-  return ids.map((id) => new URL(`${id}/api`, base).href);
+  return [...new Set(perKind.flat())].map(
+    (id) => new URL(`${id}/api`, base).href,
+  );
 });
 
 type Torrent = {
@@ -98,6 +120,7 @@ const searchFeed = Effect.fnUntraced(function* (
   key: string,
   q: PluginReleaseQuery,
   resolveMetadata: ReturnType<typeof metadataLookup>,
+  known: (torrents: readonly Torrent[]) => Effect.Effect<void>,
 ) {
   const host = yield* Network;
   const title = host.buildSearchText({ ...q, author: null });
@@ -110,7 +133,9 @@ const searchFeed = Effect.fnUntraced(function* (
     extended: "1",
     limit: "50",
   }).toString();
-  const response = yield* request(url.href, "Torznab");
+  // A feed behind a browser challenge can take longer than any other request; the search's own
+  // collection deadline, not this one, decides how long it is worth waiting for.
+  const response = yield* request(url.href, "Torznab", {}, true, "17 seconds");
   const body = yield* Effect.tryPromise({
     try: () => response.text(),
     catch: () => fail("Could not read Torznab results."),
@@ -189,59 +214,94 @@ const searchFeed = Effect.fnUntraced(function* (
         ? (error as ReturnType<typeof fail>)
         : fail("Could not parse Torznab results."),
   });
-  const results: Torrent[] = parsed.flatMap((item) =>
+  const direct: Torrent[] = parsed.flatMap((item) =>
     item.hash ? [{ ...item.torrent, hash: item.hash }] : [],
   );
   const relevant = (torrent: Omit<Torrent, "hash">) =>
     matches(title, torrent.title);
   const pending = new Map<string, Omit<Torrent, "hash">[]>();
+  let leftOut = false;
   for (const item of parsed) {
     const torrent = item.torrent;
     if (item.hash || !item.download || !relevant(torrent)) continue;
     const existing = pending.get(item.download);
     if (existing) existing.push(torrent);
     else if (pending.size < 4) pending.set(item.download, [torrent]);
+    else leftOut = true;
   }
-  let metadataExpired = false;
+  if (leftOut)
+    host.logger.warn(
+      "Torznab: more than four matching results needed a torrent link lookup; the rest were left out.",
+    );
+  // Every result that already carries a hash becomes known in one step; each link's results
+  // follow when its lookup finishes.
+  yield* known(direct);
+  let matched = direct.some(relevant);
+  // Why lookups got no answer about their torrent, and what the feed logs if it does not fail.
+  const unanswered = new Set<string>();
+  const warnings: string[] = [];
   yield* Effect.forEach(
     [...pending],
     ([download, torrents]) =>
       resolveMetadata(download, endpoint).pipe(
         Effect.result,
-        Effect.map((result) => {
-          if (Result.isSuccess(result))
-            for (const torrent of torrents)
-              results.push({ ...torrent, hash: result.success });
-          else
-            host.logger.warn(
-              "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.",
+        Effect.flatMap((result) => {
+          if (Result.isSuccess(result)) {
+            matched = true;
+            return known(
+              torrents.map((torrent) => ({ ...torrent, hash: result.success })),
             );
+          }
+          if (result.failure._tag === "Unanswered")
+            unanswered.add(result.failure.kind);
+          warnings.push(
+            "Torznab: a matching result's torrent metadata could not be resolved; other results remain available.",
+          );
+          return Effect.void;
         }),
       ),
-    { concurrency: 2 },
+    { concurrency: 2, discard: true },
   ).pipe(
     Effect.timeoutOrElse({
       duration: "10 seconds",
       orElse: () =>
         Effect.sync(() => {
-          metadataExpired = true;
-          host.logger.warn(
+          unanswered.add("timeout");
+          warnings.push(
             "Torznab: torrent metadata lookup budget expired; completed results remain available.",
           );
         }),
     }),
   );
-  if (metadataExpired && !results.some(relevant))
+  // The lookups left nothing known and at least one went unanswered: the feed fails with the
+  // first reason in this order, regardless of the order the lookups settle in.
+  const reason = matched
+    ? undefined
+    : (
+        [
+          ["timeout", "matching torrent metadata lookup timed out"],
+          [
+            "throttled",
+            "a matching result's torrent link was rate limited (HTTP 429)",
+          ],
+          [
+            "unreachable",
+            "a matching result's torrent link could not be reached",
+          ],
+          ["error", "a matching result's torrent link answered a server error"],
+        ] as const
+      ).find(([kind]) => unanswered.has(kind));
+  if (reason)
     return yield* Effect.fail(
-      fail(
-        "Torznab: matching torrent metadata lookup timed out. Retry later.",
-        "timeout",
-      ),
+      fail(`Torznab: ${reason[1]}. Retry later.`, reason[0]),
     );
-  return results;
+  for (const warning of warnings) host.logger.warn(warning);
 });
 
 export function searchFeeds(key: string, q: PluginReleaseQuery) {
   const resolveMetadata = metadataLookup(key);
-  return (endpoint: string) => searchFeed(endpoint, key, q, resolveMetadata);
+  return (
+    endpoint: string,
+    known: (torrents: readonly Torrent[]) => Effect.Effect<void>,
+  ) => searchFeed(endpoint, key, q, resolveMetadata, known);
 }

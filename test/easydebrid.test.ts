@@ -67,20 +67,23 @@ test("EasyDebrid maps only cached positional manifests without adding a torrent"
 });
 
 test("EasyDebrid rejects incomplete, malformed and missing cached manifests", async () => {
-  for (const response of [
-    { result: [] },
-    { result: [{ cached: true }] },
-    {
-      result: [
-        {
-          cached: true,
-          files: [{ name: "book.epub", folder: "Book", size: "100" }],
-        },
-      ],
-    },
-  ]) {
+  for (const [response, message] of [
+    [{ result: [] }, /returned an incomplete cache response/],
+    [{ result: [{ cached: true }] }, /did not provide a cached file list/],
+    [
+      {
+        result: [
+          {
+            cached: true,
+            files: [{ name: "book.epub", folder: "Book", size: "100" }],
+          },
+        ],
+      },
+      /EasyDebrid cache: response was not recognized/,
+    ],
+  ] as const) {
     const f = fixture(() => Response.json(response));
-    await assert.rejects(f.run(EasyDebrid.cached([hash], key)));
+    await assert.rejects(f.run(EasyDebrid.cached([hash], key)), message);
     assert.equal(f.calls.length, 1);
   }
 });

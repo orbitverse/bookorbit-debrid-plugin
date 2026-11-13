@@ -9,7 +9,7 @@ import {
   type File,
   type PluginReleaseQuery,
 } from "./model.js";
-import { decode, json, request } from "./http.js";
+import { addGuard, decode, json, request } from "./http.js";
 import { selectFiles } from "./books.js";
 
 const base = "https://debrid-link.com/api/v2/";
@@ -297,6 +297,7 @@ export const resolve = Effect.fnUntraced(function* (
   return yield* safeUrl(matches[0].downloadUrl!, key);
 });
 const preparation = Semaphore.makeUnsafe(1);
+const guardAdd = addGuard("Debrid-Link");
 export const prepare = Effect.fnUntraced(function* (
   hash: string,
   key: string,
@@ -320,6 +321,7 @@ export const prepare = Effect.fnUntraced(function* (
         );
       }
       if (existing.length) return { status: "preparing" as const };
+      yield* guardAdd(key, hash);
       const added = yield* call("seedbox/add", key, {
         url: `magnet:?xt=urn:btih:${hash}`,
         wait: false,

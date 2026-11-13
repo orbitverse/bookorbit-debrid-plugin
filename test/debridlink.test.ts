@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import * as TestClock from "effect/testing/TestClock";
 import * as DL from "../src/debridlink.js";
 import { Network } from "../src/http.js";
 import type { SourceError } from "../src/model.js";
@@ -35,8 +37,14 @@ const selection = {
   files: [{ name: "Book.epub", size: 123 }],
   format: "epub",
 };
+// A test that sends an add takes its own account, so the recent-add guard of one test
+// cannot answer for another.
+let accounts = 0;
+const fresh = () => `${key}/${++accounts}`;
 function fixture(
   options: {
+    key?: string;
+    hash?: string;
     jobs?: () => unknown[];
     details?: (id: string) => unknown;
     pagination?: unknown;
@@ -45,11 +53,13 @@ function fixture(
 ) {
   const calls: { route: string; method: string; body: unknown }[] = [],
     logs: string[] = [];
+  const account = options.key ?? key,
+    requested = options.hash ?? hash;
   const host: PluginHost = {
     async fetch(input, init) {
       const url = new URL(input);
       assert.equal(url.origin, "https://debrid-link.com");
-      assert.equal(init?.headers?.Authorization, `Bearer ${key}`);
+      assert.equal(init?.headers?.Authorization, `Bearer ${account}`);
       assert.equal(init?.redirect, "manual");
       const route = url.pathname.replace("/api/v2/", "");
       calls.push({
@@ -61,11 +71,13 @@ function fixture(
         return envelope({ accountType: 1, premiumLeft: 100 });
       if (route === "seedbox/add") {
         assert.deepEqual(JSON.parse(init!.body!), {
-          url: `magnet:?xt=urn:btih:${hash}`,
+          url: `magnet:?xt=urn:btih:${requested}`,
           wait: false,
           structureType: "list",
         });
-        return options.add?.() ?? envelope({ id: "job1", hashString: hash });
+        return (
+          options.add?.() ?? envelope({ id: "job1", hashString: requested })
+        );
       }
       assert.equal(route, "seedbox/list");
       const id = url.searchParams.get("ids");
@@ -90,7 +102,7 @@ function fixture(
     Effect.runPromise(effect.pipe(Effect.provideService(Network, host)), {
       signal,
     });
-  return { calls, logs, host, run };
+  return { calls, logs, host, run, key: account };
 }
 const writes = (calls: ReturnType<typeof fixture>["calls"]) =>
   calls.filter((c) => c.method === "POST");
@@ -201,8 +213,11 @@ test("Debrid-Link refuses unsafe native URLs without logging secrets or response
 });
 
 test("Debrid-Link preparation adds one magnet only after proving exact hash absence", async () => {
-  const f = fixture({ jobs: () => [job({ hashString: other })] });
-  assert.deepEqual(await f.run(DL.prepare(hash, key, context)), {
+  const f = fixture({
+    key: fresh(),
+    jobs: () => [job({ hashString: other })],
+  });
+  assert.deepEqual(await f.run(DL.prepare(hash, f.key, context)), {
     status: "preparing",
   });
   assert.equal(writes(f.calls).length, 1);
@@ -259,6 +274,7 @@ test("Debrid-Link does not treat aggregate ZIPs or chapter tracks as complete si
 test("ambiguous Debrid-Link add is not retried and later invocation reuses account state", async () => {
   let present = false;
   const f = fixture({
+    key: fresh(),
     jobs: () => (present ? [job()] : []),
     details: () => job({ status: 1, downloadPercent: 0, files: [] }),
     add: async () => {
@@ -267,10 +283,10 @@ test("ambiguous Debrid-Link add is not retried and later invocation reuses accou
     },
   });
   await assert.rejects(
-    f.run(DL.prepare(hash, key, context)),
+    f.run(DL.prepare(hash, f.key, context)),
     /outcome is uncertain/,
   );
-  assert.deepEqual(await f.run(DL.prepare(hash, key, context)), {
+  assert.deepEqual(await f.run(DL.prepare(hash, f.key, context)), {
     status: "preparing",
   });
   assert.equal(writes(f.calls).length, 1);
@@ -281,6 +297,7 @@ test("Debrid-Link process gate prevents parallel adds and releases after cancell
     present = false;
   const active = new Promise<void>((resolve) => (entered = resolve));
   const f = fixture({
+    key: fresh(),
     jobs: () => (present ? [job()] : []),
     details: () => job({ files: [], downloadPercent: 0 }),
     add: async () => {
@@ -290,15 +307,15 @@ test("Debrid-Link process gate prevents parallel adds and releases after cancell
     },
   });
   const controller = new AbortController(),
-    first = f.run(DL.prepare(hash, key, context), controller.signal);
+    first = f.run(DL.prepare(hash, f.key, context), controller.signal);
   await active;
   await assert.rejects(
-    f.run(DL.prepare(hash, key, context)),
+    f.run(DL.prepare(hash, f.key, context)),
     /preparation is in progress/,
   );
   controller.abort();
   await assert.rejects(first);
-  assert.deepEqual(await f.run(DL.prepare(hash, key, context)), {
+  assert.deepEqual(await f.run(DL.prepare(hash, f.key, context)), {
     status: "preparing",
   });
   assert.equal(writes(f.calls).length, 1);
@@ -320,4 +337,119 @@ test("Debrid-Link classifies official auth and quota errors without exposing raw
     });
     assert.deepEqual(f.logs, []);
   }
+});
+
+const adds = (calls: ReturnType<typeof fixture>["calls"]) =>
+  calls.filter((c) => c.route === "seedbox/add").length;
+const recent = /recent Debrid-Link preparation may still be processing/;
+
+test("an interrupted Debrid-Link add is not sent again until the account listing shows the job", async () => {
+  let present = false,
+    landed!: () => void;
+  const answered = new Promise<void>((resolve) => (landed = resolve));
+  const f = fixture({
+    key: fresh(),
+    jobs: () => (present ? [job()] : []),
+    details: () => job({ status: 1, downloadPercent: 0, files: [] }),
+    add: () =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          present = true;
+          landed();
+          resolve(envelope({ id: "job1", hashString: hash }));
+        }, 1500),
+      ),
+  });
+  const controller = new AbortController(),
+    first = f.run(DL.prepare(hash, f.key, context), controller.signal);
+  setTimeout(() => controller.abort(), 500);
+  await assert.rejects(first);
+  await assert.rejects(f.run(DL.prepare(hash, f.key, context)), (error) => {
+    assert(error instanceof Error);
+    assert.match(error.message, recent);
+    assert.match(error.message, /Wait at least ten minutes/);
+    assert(!error.message.includes(f.key));
+    assert(!error.message.includes(hash));
+    return true;
+  });
+  assert.equal(adds(f.calls), 1);
+  await answered;
+  assert.deepEqual(await f.run(DL.prepare(hash, f.key, context)), {
+    status: "preparing",
+  });
+  assert.equal(writes(f.calls).length, 1);
+  assert.deepEqual(f.logs, []);
+});
+
+test("a recent Debrid-Link add blocks only its own account and hash", async () => {
+  const f = fixture({ key: fresh(), jobs: () => [] });
+  assert.deepEqual(await f.run(DL.prepare(hash, f.key, context)), {
+    status: "preparing",
+  });
+  await assert.rejects(f.run(DL.prepare(hash, f.key, context)), recent);
+  assert.equal(adds(f.calls), 1);
+  const otherAccount = fixture({ key: fresh(), jobs: () => [] }),
+    otherTorrent = fixture({ key: f.key, hash: other, jobs: () => [] });
+  for (const [current, selected] of [
+    [otherAccount, hash],
+    [otherTorrent, other],
+  ] as const) {
+    assert.deepEqual(
+      await current.run(DL.prepare(selected, current.key, context)),
+      { status: "preparing" },
+    );
+    assert.equal(adds(current.calls), 1);
+  }
+});
+
+test("a Debrid-Link add the provider refused is not sent again while its guard lasts", async () => {
+  const f = fixture({
+    key: fresh(),
+    jobs: () => [],
+    add: async () => Response.json({ success: false, error: "maxTorrent" }),
+  });
+  await assert.rejects(
+    f.run(DL.prepare(hash, f.key, context)),
+    /allowance reached/,
+  );
+  await assert.rejects(f.run(DL.prepare(hash, f.key, context)), recent);
+  assert.equal(adds(f.calls), 1);
+});
+
+test("Debrid-Link add guards expire after ten minutes and the bound never evicts active ones", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const clock = yield* TestClock.make();
+        yield* clock.setTime((yield* Clock.currentTimeMillis) + 3_600_000);
+        yield* Effect.promise(async () => {
+          const absent = () => fixture({ key: fresh(), jobs: () => [] });
+          const run = (f: ReturnType<typeof fixture>) =>
+            f.run(
+              DL.prepare(hash, f.key, context).pipe(
+                Effect.provideService(Clock.Clock, clock),
+              ),
+            );
+          const first = absent();
+          await run(first);
+          await Effect.runPromise(clock.adjust("599999 millis"));
+          await assert.rejects(run(first), recent);
+          await Effect.runPromise(clock.adjust("1 milli"));
+          await run(first);
+          assert.equal(adds(first.calls), 2);
+          for (let i = 1; i < 100; i++) await run(absent());
+          const blocked = absent();
+          await assert.rejects(
+            run(blocked),
+            /Too many recent Debrid-Link preparations/,
+          );
+          assert.equal(adds(blocked.calls), 0);
+          await assert.rejects(run(first), recent);
+          await Effect.runPromise(clock.adjust("10 minutes"));
+          await run(blocked);
+          assert.equal(adds(blocked.calls), 1);
+        });
+      }),
+    ),
+  );
 });

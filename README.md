@@ -69,15 +69,22 @@ For Jackett, enter the paths from your indexers’ Torznab URLs in **Torznab API
 paths**, separated by commas, without query strings. For specific Prowlarr
 indexers, enter paths such as `/1/api,/2/api`.
 
-Use public indexers that return an infohash or magnet. Private and hashless
-results are not supported. Real-Debrid and Debrid-Link check your account rather
+Use public indexers; private results are not supported. A result without an
+infohash or magnet is looked up through its torrent link, for up to four
+torrent links per feed. Real-Debrid and Debrid-Link check your account rather
 than the shared cache; accounts with more than 100 entries are not supported.
 
 Preparation does not guarantee a supported book. Real-Debrid may ask you to
 select files on its website when several book files are available.
 
-Separate ebook formats are kept. TorBox can deliver a numbered audiobook track
-set together as a ZIP; ambiguous archives and mixed book collections are skipped.
+Separate ebook formats are kept, and each format is judged on its own. Among a
+torrent's ebooks of one format, a file named exactly for the book is the only
+result. Without one, each matching file of that format is its own result and
+its title starts with the file's name: they may be different books or samples,
+so check the name before downloading. A file that is alone in its format keeps
+the torrent's title. TorBox can deliver a numbered
+audiobook track set together as a ZIP; ambiguous audiobook archives and mixed
+audiobook collections are skipped.
 If an imported audiobook has incorrect timing or missing chapters, scan its
 library once.
 

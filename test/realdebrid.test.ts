@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import * as TestClock from "effect/testing/TestClock";
 import * as RD from "../src/realdebrid.js";
 import { Network } from "../src/http.js";
 import type { SourceError } from "../src/model.js";
@@ -26,8 +28,14 @@ const selection = {
   files: [{ name: "Book.epub", size: 123 }],
   format: "epub",
 };
+// A test that sends an add takes its own account, so the recent-add guard of one test
+// cannot answer for another.
+let accounts = 0;
+const fresh = () => `${key}/${++accounts}`;
 function fixture(
   options: {
+    key?: string;
+    hash?: string;
     jobs?: () => unknown[];
     details?: (id: string) => unknown;
     add?: () => Promise<Response>;
@@ -38,11 +46,13 @@ function fixture(
 ) {
   const calls: { route: string; method: string; body: URLSearchParams }[] = [],
     logs: string[] = [];
+  const account = options.key ?? key,
+    requested = options.hash ?? hash;
   const host: PluginHost = {
     async fetch(input, init) {
       const url = new URL(input);
       assert.equal(url.origin, "https://api.real-debrid.com");
-      assert.equal(init?.headers?.Authorization, `Bearer ${key}`);
+      assert.equal(init?.headers?.Authorization, `Bearer ${account}`);
       assert.equal(init?.redirect, "manual");
       const route = url.pathname.replace("/rest/1.0/", ""),
         body = new URLSearchParams(init?.body);
@@ -61,7 +71,7 @@ function fixture(
           (await options.details?.(route.split("/").pop()!)) ?? torrent(),
         );
       if (route === "torrents/addMagnet") {
-        assert.equal(body.get("magnet"), `magnet:?xt=urn:btih:${hash}`);
+        assert.equal(body.get("magnet"), `magnet:?xt=urn:btih:${requested}`);
         return (
           options.add?.() ??
           Response.json(
@@ -102,7 +112,7 @@ function fixture(
     Effect.runPromise(effect.pipe(Effect.provideService(Network, host)), {
       signal,
     });
-  return { run, calls, logs, host };
+  return { run, calls, logs, host, key: account };
 }
 const mutations = (calls: ReturnType<typeof fixture>["calls"]) =>
   calls.filter((c) => c.method === "POST");
@@ -142,6 +152,33 @@ test("Real-Debrid rejects truncated inventory and excessive matching detail fano
     await assert.rejects(f.run(RD.prepare(hash, key, context)));
     assert.deepEqual(mutations(f.calls), []);
   }
+  // Distinct, otherwise valid entries for the requested hash: the ninth stops both search and
+  // preparation at the listing, before any detail request.
+  const entries = (length: number) =>
+    fixture({
+      jobs: () => Array.from({ length }, (_, i) => torrent({ id: `rd${i}` })),
+      details: (id) => torrent({ id }),
+    });
+  const tooMany = /matched more than eight Real-Debrid account torrents/;
+  const nine = entries(9);
+  await assert.rejects(nine.run(RD.cached([hash], key)), tooMany);
+  await assert.rejects(nine.run(RD.prepare(hash, key, context)), tooMany);
+  assert.deepEqual(
+    nine.calls.map((c) => c.route),
+    ["torrents", "torrents"],
+  );
+  const eight = entries(8);
+  assert.deepEqual(await eight.run(RD.cached([hash], key)), [
+    { hash, name: "Book", files: selection.files },
+  ]);
+  assert.deepEqual(await eight.run(RD.prepare(hash, key, context)), {
+    status: "ready",
+  });
+  assert.equal(
+    eight.calls.filter((c) => c.route.startsWith("torrents/info/")).length,
+    16,
+  );
+  assert.deepEqual(mutations(eight.calls), []);
 });
 
 test("Real-Debrid rejects under-cap inventory count mismatches before details or preparation", async () => {
@@ -168,9 +205,13 @@ test("Real-Debrid rejects under-cap inventory count mismatches before details or
 });
 
 test("Real-Debrid accepts exact inventory counts for empty and ready accounts", async () => {
-  const empty = fixture({ total: "0", jobs: () => [] });
-  assert.deepEqual(await empty.run(RD.cached([hash], key)), []);
-  assert.deepEqual(await empty.run(RD.prepare(hash, key, context)), {
+  const empty = fixture({
+    key: fresh(),
+    total: "0",
+    jobs: () => [],
+  });
+  assert.deepEqual(await empty.run(RD.cached([hash], empty.key)), []);
+  assert.deepEqual(await empty.run(RD.prepare(hash, empty.key, context)), {
     status: "ready",
   });
   assert.deepEqual(
@@ -270,6 +311,7 @@ test("Real-Debrid rejects unsafe handoff links and keeps errors and logs secret-
 
 test("absent Real-Debrid preparation adds once and leaves metadata conversion pending", async () => {
   const f = fixture({
+    key: fresh(),
     jobs: () => [],
     details: () =>
       torrent({
@@ -279,7 +321,7 @@ test("absent Real-Debrid preparation adds once and leaves metadata conversion pe
         progress: 0,
       }),
   });
-  assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
+  assert.deepEqual(await f.run(RD.prepare(hash, f.key, context)), {
     status: "preparing",
   });
   assert.deepEqual(
@@ -305,6 +347,33 @@ test("waiting Real-Debrid metadata selects exactly one complete file with no sel
     });
     assert.equal(mutations(f.calls).length, 1);
     assert.equal(mutations(f.calls)[0].body.get("files"), "1");
+  }
+});
+
+test("waiting Real-Debrid metadata does not select another book beside a sample", async () => {
+  for (const names of [
+    ["Dune - Sample.epub", "Children of Dune.epub"],
+    ["Dune (preview).epub", "Dune Messiah.epub"],
+  ]) {
+    const f = fixture({
+      details: () =>
+        torrent({
+          status: "waiting_files_selection",
+          progress: 0,
+          files: names.map((name, i) => ({
+            id: i + 1,
+            path: `/${name}`,
+            bytes: 100 + i,
+            selected: 0,
+          })),
+          links: [],
+        }),
+    });
+    await assert.rejects(
+      f.run(RD.prepare(hash, key, { title: "Dune", mediaKind: "ebook" })),
+      /Select one complete ebook or single-file audiobook in your Real-Debrid account/,
+    );
+    assert.deepEqual(mutations(f.calls), []);
   }
 });
 
@@ -378,6 +447,7 @@ test("active and terminal Real-Debrid jobs do not add or reselect", async () => 
 test("ambiguous Real-Debrid add is not retried and later invocation reuses the account job", async () => {
   let present = false;
   const f = fixture({
+    key: fresh(),
     jobs: () => (present ? [torrent()] : []),
     details: () => torrent({ status: "queued", progress: 0, links: [] }),
     add: async () => {
@@ -386,10 +456,10 @@ test("ambiguous Real-Debrid add is not retried and later invocation reuses the a
     },
   });
   await assert.rejects(
-    f.run(RD.prepare(hash, key, context)),
+    f.run(RD.prepare(hash, f.key, context)),
     /outcome is uncertain/,
   );
-  assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
+  assert.deepEqual(await f.run(RD.prepare(hash, f.key, context)), {
     status: "preparing",
   });
   assert.equal(mutations(f.calls).length, 1);
@@ -400,6 +470,7 @@ test("Real-Debrid preparation gate rejects parallel writes and releases on cance
     present = false;
   const active = new Promise<void>((resolve) => (entered = resolve));
   const f = fixture({
+    key: fresh(),
     jobs: () => (present ? [torrent()] : []),
     details: () => torrent({ status: "queued", progress: 0, links: [] }),
     add: async () => {
@@ -409,15 +480,15 @@ test("Real-Debrid preparation gate rejects parallel writes and releases on cance
     },
   });
   const controller = new AbortController(),
-    first = f.run(RD.prepare(hash, key, context), controller.signal);
+    first = f.run(RD.prepare(hash, f.key, context), controller.signal);
   await active;
   await assert.rejects(
-    f.run(RD.prepare(hash, key, context)),
+    f.run(RD.prepare(hash, f.key, context)),
     /preparation is in progress/,
   );
   controller.abort();
   await assert.rejects(first);
-  assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
+  assert.deepEqual(await f.run(RD.prepare(hash, f.key, context)), {
     status: "preparing",
   });
   assert.equal(mutations(f.calls).length, 1);
@@ -439,8 +510,11 @@ test("Real-Debrid rejects conflicting ready manifests and invalid IDs before rem
 });
 
 test("a newly added Real-Debrid job that is immediately ready still validates the work", async () => {
-  const f = fixture({ jobs: () => [] });
-  assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
+  const f = fixture({
+    key: fresh(),
+    jobs: () => [],
+  });
+  assert.deepEqual(await f.run(RD.prepare(hash, f.key, context)), {
     status: "ready",
   });
   assert.deepEqual(
@@ -450,28 +524,31 @@ test("a newly added Real-Debrid job that is immediately ready still validates th
 });
 
 test("ambiguous file selection is not repeated after account selected bits change", async () => {
-  let selected = false;
-  const f = fixture({
-    details: () =>
-      torrent({
-        status: selected ? "downloading" : "waiting_files_selection",
-        progress: 0,
-        links: [],
-        files: [{ ...file, selected: selected ? 1 : 0 }],
-      }),
-    select: async () => {
-      selected = true;
-      throw Error("synthetic selection disconnect");
-    },
-  });
-  await assert.rejects(
-    f.run(RD.prepare(hash, key, context)),
-    /selection outcome is uncertain/,
-  );
-  assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
-    status: "preparing",
-  });
-  assert.equal(mutations(f.calls).length, 1);
+  // Whether or not the account has also moved the job on from waiting for a selection.
+  for (const next of ["downloading", "waiting_files_selection"]) {
+    let selected = false;
+    const f = fixture({
+      details: () =>
+        torrent({
+          status: selected ? next : "waiting_files_selection",
+          progress: 0,
+          links: [],
+          files: [{ ...file, selected: selected ? 1 : 0 }],
+        }),
+      select: async () => {
+        selected = true;
+        throw Error("synthetic selection disconnect");
+      },
+    });
+    await assert.rejects(
+      f.run(RD.prepare(hash, key, context)),
+      /selection outcome is uncertain/,
+    );
+    assert.deepEqual(await f.run(RD.prepare(hash, key, context)), {
+      status: "preparing",
+    });
+    assert.equal(mutations(f.calls).length, 1);
+  }
 });
 
 test("Real-Debrid rejects a selected nonnumbered chapter when the full manifest has other audio", async () => {
@@ -519,4 +596,130 @@ test("Real-Debrid preserves a full single-file audiobook alongside unselected eb
     { hash, name: "Book", files: [{ name: "Book.m4b", size: 123 }] },
   ]);
   assert.deepEqual(mutations(f.calls), []);
+});
+
+const adds = (calls: ReturnType<typeof fixture>["calls"]) =>
+  calls.filter((c) => c.route === "torrents/addMagnet").length;
+const recent = /recent Real-Debrid preparation may still be processing/;
+
+test("an interrupted Real-Debrid add is not sent again until the account listing shows the job", async () => {
+  let present = false,
+    landed!: () => void;
+  const answered = new Promise<void>((resolve) => (landed = resolve));
+  const f = fixture({
+    key: fresh(),
+    jobs: () => (present ? [torrent()] : []),
+    details: () =>
+      torrent({
+        status: "waiting_files_selection",
+        progress: 0,
+        files: [{ ...file, selected: 0 }],
+        links: [],
+      }),
+    add: () =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          present = true;
+          landed();
+          resolve(Response.json({ id: "rd1", uri: "x" }, { status: 201 }));
+        }, 1500),
+      ),
+  });
+  const controller = new AbortController(),
+    first = f.run(RD.prepare(hash, f.key, context), controller.signal);
+  setTimeout(() => controller.abort(), 500);
+  await assert.rejects(first);
+  await assert.rejects(f.run(RD.prepare(hash, f.key, context)), (error) => {
+    assert(error instanceof Error);
+    assert.match(error.message, recent);
+    assert.match(error.message, /Wait at least ten minutes/);
+    assert(!error.message.includes(f.key));
+    assert(!error.message.includes(hash));
+    return true;
+  });
+  assert.equal(adds(f.calls), 1);
+  await answered;
+  assert.deepEqual(await f.run(RD.prepare(hash, f.key, context)), {
+    status: "preparing",
+  });
+  assert.deepEqual(
+    mutations(f.calls).map((c) => c.route),
+    ["torrents/addMagnet", "torrents/selectFiles/rd1"],
+  );
+  assert.deepEqual(f.logs, []);
+});
+
+test("a recent Real-Debrid add blocks only its own account and hash", async () => {
+  const f = fixture({ key: fresh(), jobs: () => [] });
+  assert.deepEqual(await f.run(RD.prepare(hash, f.key, context)), {
+    status: "ready",
+  });
+  await assert.rejects(f.run(RD.prepare(hash, f.key, context)), recent);
+  assert.equal(adds(f.calls), 1);
+  const otherAccount = fixture({ key: fresh(), jobs: () => [] }),
+    otherTorrent = fixture({
+      key: f.key,
+      hash: other,
+      jobs: () => [],
+      details: () => torrent({ hash: other }),
+    });
+  for (const [current, selected] of [
+    [otherAccount, hash],
+    [otherTorrent, other],
+  ] as const) {
+    assert.deepEqual(
+      await current.run(RD.prepare(selected, current.key, context)),
+      { status: "ready" },
+    );
+    assert.equal(adds(current.calls), 1);
+  }
+});
+
+test("a Real-Debrid add the provider refused is not sent again while its guard lasts", async () => {
+  const f = fixture({
+    key: fresh(),
+    jobs: () => [],
+    add: async () => new Response(null, { status: 503 }),
+  });
+  await assert.rejects(f.run(RD.prepare(hash, f.key, context)), /HTTP 503/);
+  await assert.rejects(f.run(RD.prepare(hash, f.key, context)), recent);
+  assert.equal(adds(f.calls), 1);
+});
+
+test("Real-Debrid add guards expire after ten minutes and the bound never evicts active ones", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const clock = yield* TestClock.make();
+        yield* clock.setTime((yield* Clock.currentTimeMillis) + 3_600_000);
+        yield* Effect.promise(async () => {
+          const absent = () => fixture({ key: fresh(), jobs: () => [] });
+          const run = (f: ReturnType<typeof fixture>) =>
+            f.run(
+              RD.prepare(hash, f.key, context).pipe(
+                Effect.provideService(Clock.Clock, clock),
+              ),
+            );
+          const first = absent();
+          await run(first);
+          await Effect.runPromise(clock.adjust("599999 millis"));
+          await assert.rejects(run(first), recent);
+          await Effect.runPromise(clock.adjust("1 milli"));
+          await run(first);
+          assert.equal(adds(first.calls), 2);
+          for (let i = 1; i < 100; i++) await run(absent());
+          const blocked = absent();
+          await assert.rejects(
+            run(blocked),
+            /Too many recent Real-Debrid preparations/,
+          );
+          assert.equal(adds(blocked.calls), 0);
+          await assert.rejects(run(first), recent);
+          await Effect.runPromise(clock.adjust("10 minutes"));
+          await run(blocked);
+          assert.equal(adds(blocked.calls), 1);
+        });
+      }),
+    ),
+  );
 });

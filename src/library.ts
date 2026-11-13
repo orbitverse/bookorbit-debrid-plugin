@@ -1,5 +1,5 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Result from "effect/Result";
 import {
   config,
   Preparation,
@@ -10,6 +10,7 @@ import {
   type PluginReleaseCandidate,
   type File,
 } from "./model.js";
+import { collect } from "./collect.js";
 import type { PluginIndexerConfig } from "../vendor/bookorbit-plugin-api.js";
 import { Network, decode } from "./http.js";
 import { discover, searchFeeds } from "./torznab.js";
@@ -41,9 +42,24 @@ const prepare = (cfg: PluginIndexerConfig) =>
         : fail("Invalid source configuration."),
   });
 
+// A torrent that gives several results of one format names each result's file, or they look alike.
+const fileLabel = (
+  selections: ReturnType<typeof selectFiles>,
+  selected: ReturnType<typeof selectFiles>[number],
+) =>
+  selections.filter((other) => other.format === selected.format).length > 1
+    ? `${selected.files[0].name
+        .split(/[\\/]/)
+        .pop()!
+        .replace(/\.[^.]+$/, "")
+        .slice(0, 200)} · `
+    : "";
+
 export const search = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   cfg: PluginIndexerConfig,
+  /** Fail unless every feed answered without failing. Only Test connection asks for this. */
+  everyFeed = false,
 ) {
   const {
     account,
@@ -55,73 +71,127 @@ export const search = Effect.fnUntraced(function* (
   const host = yield* Network;
   const title = host.buildSearchText({ ...q, author: null });
   const searchIndexer = searchFeeds(account.indexerKey, q);
-  type Outcome = Result.Result<
-    Effect.Success<ReturnType<typeof searchIndexer>>,
-    ReturnType<typeof fail>
-  >;
-  const collected: (Outcome | undefined)[] = [];
-  let collectionExpired = false;
-  const collectionTimeout = () =>
-    fail(
-      "Indexer search timed out before all feeds completed. Retry with fewer indexers.",
-      "timeout",
-    );
-  // Discovery, feed requests and metadata share one stage budget, leaving time for cache access.
-  yield* Effect.gen(function* () {
-    const endpoints = configured.length
-      ? configured
-      : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
-    yield* Effect.forEach(
-      endpoints,
-      (endpoint, index) =>
-        searchIndexer(endpoint).pipe(
-          Effect.result,
-          Effect.map((outcome) => {
-            collected[index] = outcome;
-          }),
-        ),
-      { concurrency: 4, discard: true },
-    );
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: "12 seconds",
-      orElse: () =>
-        Effect.sync(() => {
-          collectionExpired = true;
-          host.logger.warn(collectionTimeout().message);
-        }),
-    }),
+  const started = yield* Clock.currentTimeMillis;
+  const endpoints = configured.length
+    ? configured
+    : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
+  const elapsed = (yield* Clock.currentTimeMillis) - started;
+  // Discovery, feed requests and metadata share one stage. It ends early enough to leave time for
+  // cache access once a feed has matches, and waits longer only while there is nothing to check.
+  const relevant = (t: { readonly title: string }) => matches(title, t.title);
+  // Test connection vouches for every feed, so there a match ends collection early only once
+  // every feed has answered: a feed keeps its whole time to answer whatever another one holds.
+  const silent = new Set(everyFeed ? endpoints : []);
+  const feeds = (yield* collect(
+    endpoints,
+    (endpoint, known: Parameters<typeof searchIndexer>[1]) =>
+      searchIndexer(endpoint, (items) => {
+        silent.delete(endpoint);
+        return known(items);
+      }),
+    {
+      softMs: Math.max(0, 12000 - elapsed),
+      hardMs: Math.max(0, 16000 - elapsed),
+      matches: (t) => !silent.size && relevant(t),
+    },
+  )).map((feed, index) => ({
+    ...feed,
+    // A feed is named by its path only: never a query string or key.
+    path: new URL(endpoints[index]).pathname,
+  }));
+  const paths = (named: typeof feeds) =>
+    named.map((feed) => feed.path).join(", ");
+  const unanswered = feeds.filter((feed) => feed.stage === "waiting");
+  const checking = feeds.filter((feed) => feed.stage === "answered");
+  const stillChecking = `${paths(checking)} ${checking.length === 1 ? "was" : "were"} still checking torrent links`;
+  const retry = "Retry shortly; the first search after a restart can be slow.";
+  const waiting = `Indexer search timed out waiting for ${paths(unanswered)}. ${retry}`;
+  const failures = feeds.flatMap((feed) =>
+    feed.failure
+      ? [fail(`${feed.path}: ${feed.failure.message}`, feed.failure.kind)]
+      : [],
   );
-  const outcomes = collected.filter((outcome) => outcome !== undefined);
-  const successful = outcomes.filter(Result.isSuccess);
-  const firstFailure = outcomes.find(Result.isFailure)?.failure;
-  if (!successful.length)
-    return yield* Effect.fail(firstFailure ?? collectionTimeout());
-  for (const outcome of outcomes)
-    if (Result.isFailure(outcome)) host.logger.warn(outcome.failure.message);
-  const torrents = new Map<
-    string,
-    (typeof successful)[number]["success"][number]
-  >();
-  // Interleave feeds before applying the cache-check ceiling.
-  for (let i = 0; i < 50; i++)
-    for (const outcome of successful) {
-      const t = outcome.success[i];
-      if (t && matches(title, t.title) && torrents.size < 100)
-        torrents.set(t.hash, t);
-    }
-  if (!torrents.size) {
-    if (firstFailure || collectionExpired)
-      return yield* Effect.fail(firstFailure ?? collectionTimeout());
-    return [];
+  // Test connection vouches for each configured feed: a match elsewhere does not excuse one that
+  // failed or never answered, and one that answered is not faulted for still checking links.
+  const broken = [
+    ...failures.map((failure) => failure.message),
+    ...(unanswered.length ? [waiting] : []),
+  ];
+  if (everyFeed && broken.length)
+    return yield* Effect.fail(
+      fail(broken.join(" "), failures[0]?.kind ?? "timeout"),
+    );
+  // What the search fails with when the feeds that finished leave nothing to check.
+  const problem =
+    failures[0] ??
+    (unanswered.length
+      ? fail(waiting, "timeout")
+      : checking.length && !everyFeed
+        ? fail(
+            `Indexer search timed out while ${stillChecking}. ${retry}`,
+            "timeout",
+          )
+        : undefined);
+  /** Names every feed that did not finish or failed, once; `error` is what the search fails with. */
+  const report = (error?: ReturnType<typeof fail>) => {
+    if (unanswered.length) host.logger.warn(waiting);
+    for (const failure of failures)
+      if (failure !== error) host.logger.warn(failure.message);
+    // The same feeds are not named twice when their sentence is the error itself.
+    if (checking.length && !(error && !failures.length && !unanswered.length))
+      host.logger.warn(
+        `Indexer search stopped while ${stillChecking}${error ? "" : "; matches already identified remain available"}.`,
+      );
+  };
+  const stop = (error: ReturnType<typeof fail>) => {
+    report(error);
+    return Effect.fail(error);
+  };
+  const torrents = new Map<string, (typeof feeds)[number]["known"][number]>();
+  // Feeds that finished come first, interleaved before the cache-check ceiling applies. What
+  // unfinished feeds already knew follows, so it never displaces or reorders a finished feed's.
+  let fromFinished = 0;
+  for (const finished of [true, false]) {
+    for (let i = 0; i < 50; i++)
+      for (const feed of feeds) {
+        const t = feed.known[i];
+        if ((feed.stage === "finished") !== finished || !t || !relevant(t))
+          continue;
+        if (torrents.size < 100 && (finished || !torrents.has(t.hash)))
+          torrents.set(t.hash, t);
+      }
+    if (finished) fromFinished = torrents.size;
   }
-  const available = yield* (
+  if (!torrents.size) return problem ? yield* stop(problem) : [];
+  // With matches only from feeds that had not finished, collection ran to its last moment. The
+  // cache then gets what is left of the search, and the feeds' own problem is the answer if the
+  // cache has nothing in that time.
+  const rescue = fromFinished ? undefined : problem;
+  if (!rescue) report();
+  const check = (
     prepareUncached && service.available ? service.available : service.cached
   )([...torrents.keys()], account.debrid.key);
+  const available = rescue
+    ? yield* check.pipe(
+        // The provider's own refusal is worth knowing beside the feeds' problem.
+        Effect.tapError((error) =>
+          Effect.sync(() => host.logger.warn(error.message)),
+        ),
+        Effect.timeoutOrElse({
+          duration: Math.max(
+            0,
+            17750 - ((yield* Clock.currentTimeMillis) - started),
+          ),
+          orElse: () => Effect.fail(rescue),
+        }),
+        Effect.catch(() => stop(rescue)),
+      )
+    : yield* check;
   const releases: PluginReleaseCandidate[] = [];
   for (const item of available) {
     const t = torrents.get(item.hash)!;
-    for (const selected of selectFiles(item.files, { ...q, title })) {
+    const selections = selectFiles(item.files, { ...q, title });
+    for (const selected of selections) {
       if (selected.format === "zip" && !service.supportsZip) continue;
       const value: Selection = {
         provider: account.debrid.provider,
@@ -138,7 +208,7 @@ export const search = Effect.fnUntraced(function* (
       if (sizeBytes > 8 * 1024 ** 3) continue;
       releases.push({
         guid,
-        title: `${t.title} · ${selected.format.toUpperCase()} · ${t.indexer} · ${service.label}`,
+        title: `${fileLabel(selections, selected)}${t.title} · ${selected.format.toUpperCase()} · ${t.indexer} · ${service.label}`,
         author: t.author,
         language: t.language,
         format: selected.format,
@@ -173,6 +243,10 @@ export const search = Effect.fnUntraced(function* (
       // A failed automatic grab may try the next result: offer at most one preparation.
       break;
     }
+  }
+  if (rescue) {
+    if (!releases.length) return yield* stop(rescue);
+    report();
   }
   return releases.slice(0, Math.max(1, Math.min(q.limit, 100)));
 });
@@ -261,12 +335,15 @@ export const resolveFile = Effect.fnUntraced(function* (
 export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
   const { account, endpoints, baseUrl } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
-  yield* service.verify(account.debrid.key);
+  const verify = service.verify(account.debrid.key);
+  // Some labels already end in "account"; the sentences below add their own noun.
+  const name = service.label.replace(/ account$/, "");
   if (!endpoints.length) {
+    yield* verify;
     yield* discover(baseUrl, account.indexerKey, ["ebook", "audiobook"]);
     return {
       success: true,
-      indexerName: `BookOrbit Debrid: Prowlarr indexer configuration and ${service.label} account access verified`,
+      indexerName: `BookOrbit Debrid: Prowlarr indexer configuration and ${name} account access verified`,
     };
   }
   const q: PluginReleaseQuery = {
@@ -278,12 +355,25 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
     language: "en",
     limit: 1,
   };
-  const releases = yield* search(q, {
-    ...cfg,
-    settings: { ...cfg.settings, prepareUncached: false },
-  });
+  // The feeds are asked while the provider is checked, so each has a search's full time to answer.
+  // A provider failure ends the test at once and stops the search; a feed problem waits for the
+  // provider check, whose failure is the one to report.
+  const [, searched] = yield* Effect.all(
+    [
+      verify,
+      Effect.result(
+        search(
+          q,
+          { ...cfg, settings: { ...cfg.settings, prepareUncached: false } },
+          true,
+        ),
+      ),
+    ],
+    { concurrency: "unbounded" },
+  );
+  const releases = yield* Effect.fromResult(searched);
   return {
     success: true,
-    indexerName: `BookOrbit Debrid: indexer search and ${service.label} cache access verified; ${releases.length} matching cached releases`,
+    indexerName: `BookOrbit Debrid: indexer search and ${name} access verified${releases.length ? "; a matching cached release was found" : ""}`,
   };
 });

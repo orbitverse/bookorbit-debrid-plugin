@@ -11,11 +11,48 @@ const normalize = (s: string) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
+// Releases drop or space out apostrophes and write "&" for "and"; accept either
+// spelling of both, and still require every query word.
+const words = (s: string, apostrophe: string) =>
+  normalize(s.replace(/['`\u2018\u2019\u02bc]/g, apostrophe))
+    .split(" ")
+    .filter(Boolean);
 export function matches(title: string, value: string): boolean {
-  const words = normalize(title).split(" ").filter(Boolean);
-  const found = new Set(normalize(value).split(" "));
-  return words.length > 0 && words.every((word) => found.has(word));
+  const spelled = value.replace(/&/g, " and ");
+  const found = new Set([...words(spelled, " "), ...words(spelled, "")]);
+  return [words(title, " "), words(title, "")].some(
+    (query) => query.length > 0 && query.every((word) => found.has(word)),
+  );
 }
+
+// Of one format's files whose path matches the title, the ones to offer: files
+// named exactly for the title, nothing more and nothing less, are the book.
+// Otherwise every file stays: nothing is dropped on a guess, not even a sample.
+function requested(files: readonly File[], title: string): readonly File[] {
+  const spell = (s: string) =>
+    ["", " "].map((a) => words(s.replace(/&/g, " and "), a).join(" "));
+  const stem = (f: File) => f.name.replace(/^.*[\\/]|\.[^.]+$/g, "");
+  const exact = files.filter((f) =>
+    spell(stem(f)).some((name) => spell(title).includes(name)),
+  );
+  return exact.length ? exact : files;
+}
+const selectEbooks = (files: readonly File[], title: string) => {
+  const found = files.filter(
+    (f) => ebook.has(extension(f.name)) && matches(title, f.name),
+  );
+  const kept = new Set(
+    [...ebook].flatMap((format) =>
+      requested(
+        found.filter((f) => extension(f.name) === format),
+        title,
+      ),
+    ),
+  );
+  return found
+    .filter((f) => kept.has(f))
+    .map((f) => ({ files: [f], format: extension(f.name) }));
+};
 
 export function selectFiles(
   files: readonly File[],
@@ -27,21 +64,19 @@ export function selectFiles(
     files.some((f) => /(?:^|[\\/])\.\.(?:[\\/]|$)|[\x00-\x1f]/.test(f.name))
   )
     return [];
-  if (q.mediaKind === "ebook")
-    return files
-      .filter((f) => ebook.has(extension(f.name)) && matches(q.title, f.name))
-      .map((f) => ({ files: [f], format: extension(f.name) }));
+  if (q.mediaKind === "ebook") return selectEbooks(files, q.title);
   const tracks = files.filter((f) => isAudioFile(f.name));
   if (!tracks.length) return [];
   if (tracks.length === 1) {
     const name = tracks[0].name.split(/[\\/]/).pop()!;
-    const remainder = normalize(name.replace(/\.[^.]+$/, ""))
-      .replace(normalize(q.title), "")
-      .trim();
-    const chapter =
+    // What the name adds to the title, in either spelling of an apostrophe.
+    const chapter = ["", " "].every((a) =>
       /(?:^|\s)(?:(?:chapter|track|part|disc|cd)\s*)?\d{1,3}(?:\s|$)/i.test(
-        remainder,
-      );
+        words(name.replace(/\.[^.]+$/, ""), a)
+          .join(" ")
+          .replace(words(q.title, a).join(" "), ""),
+      ),
+    );
     return matches(q.title, name) && !chapter
       ? [{ files: tracks, format: extension(tracks[0].name) }]
       : [];

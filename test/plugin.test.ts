@@ -323,6 +323,50 @@ test("one broken feed does not suppress another feed's results", async () => {
   assert.equal(releases.length, 1);
   assert.equal(warnings.length, 1);
 });
+test("a failed feed's error names the feed path and nothing from its query string", async () => {
+  for (const [reply, expected] of [
+    [() => new Response("down", { status: 500 }), "Torznab: HTTP 500."],
+    [() => new Response("slow down", { status: 429 }), "Torznab: HTTP 429."],
+    [() => new Response("<html>Sign in</html>"), "Not a Torznab feed."],
+  ] as const) {
+    const f = fixture();
+    const warnings: string[] = [];
+    f.host.logger.warn = (message) => warnings.push(message);
+    // The other feed answers with no results, so the failure becomes the search's error.
+    f.host.fetch = async (input) =>
+      new URL(input).pathname === "/3/api" ? reply() : new Response(xml(""));
+    await assert.rejects(
+      plugin.search(
+        q,
+        { ...cfg, settings: { indexerPaths: "/2/api,/3/api" } },
+        f.host,
+        new AbortController().signal,
+      ),
+      (error) => {
+        assert(error instanceof Error);
+        assert(error.message.startsWith(`/3/api: ${expected}`), error.message);
+        assert(!/SYNTHETIC|apikey|\?/.test(error.message), error.message);
+        return true;
+      },
+    );
+    // Beside a feed with a match the same failure is only a warning, with the same prefix.
+    f.host.fetch = ((fetch) => async (input, init) =>
+      new URL(input).pathname === "/3/api" ? reply() : fetch(input, init))(
+      fixture().host.fetch,
+    );
+    warnings.length = 0;
+    const releases = await plugin.search(
+      q,
+      { ...cfg, settings: { indexerPaths: "/1/api,/3/api" } },
+      f.host,
+      new AbortController().signal,
+    );
+    assert.equal(releases.length, 1);
+    assert.equal(warnings.length, 1);
+    assert(warnings[0].startsWith(`/3/api: ${expected}`), warnings[0]);
+    assert(!/SYNTHETIC|apikey|\?/.test(warnings[0]), warnings[0]);
+  }
+});
 test("cancellation reaches a stalled search without returning partial candidates", async () => {
   const f = fixture();
   f.host.fetch = () => new Promise(() => {});
@@ -622,6 +666,56 @@ test("automatic connection test rejects servers without either book category", a
   assert.equal(f.discovered.length, 2);
 });
 
+test("connection test counts each media kind's indexers on its own, as each search does", async () => {
+  const kinds = (ebooks: number, audiobooks: number) =>
+    Array.from({ length: ebooks + audiobooks }, (_, index) =>
+      publicIndexer(index + 1, index < ebooks ? 7020 : 3030),
+    );
+  for (const [ebooks, audiobooks] of [
+    [5, 5],
+    [8, 8],
+    [3, 0],
+    [0, 8],
+  ]) {
+    const f = discoveryFixture(kinds(ebooks, audiobooks));
+    const result = await plugin.test({ ...cfg, settings: {} }, f.host);
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert(!f.discovered.some((u) => u.searchParams.has("q")));
+  }
+  for (const [ebooks, audiobooks] of [
+    [9, 5],
+    [5, 9],
+    [9, 0],
+  ]) {
+    const f = discoveryFixture(kinds(ebooks, audiobooks));
+    const result = await plugin.test({ ...cfg, settings: {} }, f.host);
+    assert.equal(result.success, false);
+    assert("error" in result);
+    assert.match(result.error, /More than eight/);
+  }
+});
+
+test("a search uses the eight indexers of its own kind beside others of the other kind", async () => {
+  const f = discoveryFixture([
+    ...Array.from({ length: 8 }, (_, i) => publicIndexer(i + 1)),
+    ...Array.from({ length: 5 }, (_, i) => publicIndexer(i + 9, 3030)),
+  ]);
+  const releases = await plugin.search(
+    q,
+    { ...cfg, settings: {} },
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(releases.length, 1);
+  assert.deepEqual(
+    f.discovered
+      .filter((u) => u.pathname.endsWith("/api"))
+      .map((u) => u.pathname)
+      .sort(),
+    [1, 2, 3, 4, 5, 6, 7, 8].map((id) => `/${id}/api`),
+  );
+});
+
 const easyCfg: PluginIndexerConfig = {
   ...cfg,
   credential: JSON.stringify({
@@ -762,4 +856,60 @@ test("EasyDebrid plugin omits tracksets that it cannot deliver as a complete ZIP
     [],
   );
   assert(!f.calls.some((path) => path.endsWith("generate")));
+});
+
+const hashless = (title = "The Little Prince") =>
+  `<item><title>${title}</title><enclosure type="application/x-bittorrent" url="/2/download?link=opaque"/></item>`;
+/** Feed /2/api holds one matching result without a hash, whose torrent link answers HTTP 429. */
+function refusedLookupFixture(title?: string) {
+  const f = fixture();
+  const fetch = f.host.fetch;
+  const warnings: string[] = [];
+  f.host.logger.warn = (message) => warnings.push(message);
+  f.host.fetch = async (input, init) => {
+    const url = new URL(input);
+    if (url.pathname === "/2/api") return new Response(xml(hashless(title)));
+    if (url.pathname === "/2/download")
+      return new Response("slow down", { status: 429 });
+    return fetch(input, init);
+  };
+  return { host: f.host, warnings };
+}
+const refusedLookup =
+  "/2/api: Torznab: a matching result's torrent link was rate limited (HTTP 429). Retry later.";
+
+test("a refused torrent link lookup fails the search with the feed path instead of an empty list", async () => {
+  const f = refusedLookupFixture();
+  await assert.rejects(
+    plugin.search(
+      q,
+      { ...cfg, settings: { indexerPaths: "/2/api" } },
+      f.host,
+      new AbortController().signal,
+    ),
+    (error) => {
+      assert(error instanceof Error && "kind" in error);
+      assert.equal(error.kind, "throttled");
+      assert.equal(error.message, refusedLookup);
+      return true;
+    },
+  );
+  assert.deepEqual(f.warnings, []);
+  // Beside a feed with a match the same reason is only a warning, with the same prefix.
+  const releases = await plugin.search(
+    q,
+    { ...cfg, settings: { indexerPaths: "/1/api,/2/api" } },
+    f.host,
+    new AbortController().signal,
+  );
+  assert.equal(releases.length, 1);
+  assert.deepEqual(f.warnings, [refusedLookup]);
+});
+
+test("Test connection with configured paths reports a refused torrent link lookup", async () => {
+  const f = refusedLookupFixture("Pride and Prejudice");
+  assert.deepEqual(
+    await plugin.test({ ...cfg, settings: { indexerPaths: "/2/api" } }, f.host),
+    { success: false, error: refusedLookup },
+  );
 });
