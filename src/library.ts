@@ -58,9 +58,13 @@ const fileLabel = (
 export const search = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   cfg: PluginIndexerConfig,
-  /** Fail unless every feed answered without failing. Only Test connection asks for this. */
-  everyFeed = false,
+  /**
+   * When Test connection began. With it the search fails unless every feed answered without
+   * failing, and its limits count from then, not from where the search began.
+   */
+  testStarted?: number,
 ) {
+  const everyFeed = testStarted !== undefined;
   const {
     account,
     endpoints: configured,
@@ -71,7 +75,7 @@ export const search = Effect.fnUntraced(function* (
   const host = yield* Network;
   const title = host.buildSearchText({ ...q, author: null });
   const searchIndexer = searchFeeds(account.indexerKey, q);
-  const started = yield* Clock.currentTimeMillis;
+  const started = testStarted ?? (yield* Clock.currentTimeMillis);
   const endpoints = configured.length
     ? configured
     : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
@@ -322,6 +326,7 @@ export const resolveFile = Effect.fnUntraced(function* (
 });
 
 export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
+  const started = yield* Clock.currentTimeMillis;
   const { account, endpoints, baseUrl } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
   yield* service.verify(account.debrid.key);
@@ -346,7 +351,7 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
   const releases = yield* search(
     q,
     { ...cfg, settings: { ...cfg.settings, prepareUncached: false } },
-    true,
+    started,
   );
   return {
     success: true,

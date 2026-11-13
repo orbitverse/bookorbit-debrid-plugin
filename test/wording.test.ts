@@ -315,3 +315,33 @@ test("Test connection passes when every feed answered, one is still checking a t
   assert.deepEqual(result, { success: true, indexerName: verified });
   assert(performance.now() - start < 18000);
 });
+
+// The provider check takes three seconds and feed 1 never answers. Every limit counts from the
+// start of the test, so the feed is named at sixteen seconds, inside the eighteen it is given.
+test("Test connection names a feed that never answered, however long the provider check took", async () => {
+  const f = twoFeeds({
+    "/1/api": () => new Promise<Response>(() => {}),
+    "/2/api": () => new Response(empty),
+  });
+  let checked = false;
+  const start = performance.now();
+  assert.deepEqual(
+    await plugin.test(twoPaths, {
+      ...f.host,
+      async fetch(input, init) {
+        if (!checked && new URL(input).hostname !== "indexer.example") {
+          checked = true;
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+        return f.host.fetch(input, init);
+      },
+    }),
+    {
+      success: false,
+      error:
+        "Indexer search timed out waiting for /1/api. Retry shortly; the first search after a restart can be slow.",
+    },
+  );
+  assert(checked);
+  assert(performance.now() - start < 17000);
+});
