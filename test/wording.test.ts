@@ -272,3 +272,46 @@ test("Test connection with two working feeds mentions a cached release only when
     { success: true, indexerName: verified },
   );
 });
+
+// Feed 2 answers at seven seconds and its lookup has ten more, so nothing ends collection before
+// its sixteen-second limit: the test takes sixteen seconds, inside the eighteen it is given.
+test("Test connection passes when every feed answered, one is still checking a torrent link and none has a match", async () => {
+  const feeds = {
+    "/1/api": () => new Response(empty),
+    "/2/api": async () => {
+      await new Promise((resolve) => setTimeout(resolve, 7000));
+      return new Response(
+        '<rss><channel><title>Books</title><item><title>Pride and Prejudice</title><enclosure type="application/x-bittorrent" url="/2/download?link=opaque"/></item></channel></rss>',
+      );
+    },
+    "/2/download": () => new Promise<Response>(() => {}),
+  };
+  const start = performance.now();
+  const [result] = await Promise.all([
+    plugin.test(twoPaths, twoFeeds(feeds).host),
+    // The same feeds through a search still time out.
+    assert.rejects(
+      plugin.search(
+        {
+          title: "Pride and Prejudice",
+          author: "Jane Austen",
+          isbn13: null,
+          isbn13s: [],
+          mediaKind: "ebook",
+          language: "en",
+          limit: 1,
+        },
+        twoPaths,
+        twoFeeds(feeds).host,
+        new AbortController().signal,
+      ),
+      {
+        kind: "timeout",
+        message:
+          "Indexer search timed out while /2/api was still checking torrent links. Retry shortly; the first search after a restart can be slow.",
+      },
+    ),
+  ]);
+  assert.deepEqual(result, { success: true, indexerName: verified });
+  assert(performance.now() - start < 18000);
+});

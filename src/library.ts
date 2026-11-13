@@ -100,7 +100,8 @@ export const search = Effect.fnUntraced(function* (
       ? [fail(`${feed.path}: ${feed.failure.message}`, feed.failure.kind)]
       : [],
   );
-  // Test connection vouches for each configured feed, so a match elsewhere does not excuse one.
+  // Test connection vouches for each configured feed: a match elsewhere does not excuse one that
+  // failed or never answered, and one that answered is not faulted for still checking links.
   const broken = [
     ...failures.map((failure) => failure.message),
     ...(unanswered.length ? [waiting] : []),
@@ -114,7 +115,7 @@ export const search = Effect.fnUntraced(function* (
     failures[0] ??
     (unanswered.length
       ? fail(waiting, "timeout")
-      : checking.length
+      : checking.length && !everyFeed
         ? fail(
             `Indexer search timed out while ${stillChecking}. ${retry}`,
             "timeout",
