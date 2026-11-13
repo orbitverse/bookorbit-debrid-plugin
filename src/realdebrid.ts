@@ -9,7 +9,7 @@ import {
   type File,
   type PluginReleaseQuery,
 } from "./model.js";
-import { decode, json, request } from "./http.js";
+import { addGuard, decode, json, request } from "./http.js";
 import { isAudioFile, selectFiles } from "./books.js";
 
 const base = "https://api.real-debrid.com/rest/1.0/";
@@ -267,6 +267,7 @@ export const resolve = Effect.fnUntraced(function* (
 });
 
 const preparation = Semaphore.makeUnsafe(1);
+const guardAdd = addGuard("Real-Debrid");
 export const prepare = Effect.fnUntraced(function* (
   hash: string,
   key: string,
@@ -286,6 +287,7 @@ export const prepare = Effect.fnUntraced(function* (
         );
       let torrent = healthy;
       if (!torrent) {
+        yield* guardAdd(key, hash);
         const added = yield* Effect.gen(function* () {
           return yield* decode(
             Schema.Struct({ id: Id, uri: Schema.NonEmptyString }),
