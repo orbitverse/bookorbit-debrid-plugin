@@ -204,8 +204,8 @@ test("Test connection names every configured feed that failed", async () => {
   );
 });
 
-// Collection waits twelve seconds for every feed before a match elsewhere may end it, so this
-// takes twelve seconds: inside the eighteen the whole test is given.
+// A match elsewhere does not cut short the sixteen seconds a feed has to answer, so this takes
+// sixteen seconds: inside the eighteen the whole test is given.
 test("Test connection fails on a configured feed that never answered, although another feed holds a match", async () => {
   const start = performance.now();
   assert.deepEqual(
@@ -222,7 +222,7 @@ test("Test connection fails on a configured feed that never answered, although a
         "Indexer search timed out waiting for /1/api. Retry shortly; the first search after a restart can be slow.",
     },
   );
-  assert(performance.now() - start < 13000);
+  assert(performance.now() - start < 17000);
 });
 
 // Feed 1 answers after four seconds and its lookup has ten more, so it is still checking when
@@ -344,4 +344,80 @@ test("Test connection names a feed that never answered, however long the provide
   );
   assert(checked);
   assert(performance.now() - start < 17000);
+});
+
+// The provider check takes six seconds; feed 2 answers, with nothing, seven seconds after it is
+// asked. The feeds do not wait for the provider check and a feed has sixteen seconds to answer.
+test("Test connection passes when a feed answered in time, however long the provider check took", async () => {
+  const f = twoFeeds({
+    "/1/api": () => new Response(pride),
+    "/2/api": async () => {
+      await new Promise((resolve) => setTimeout(resolve, 7000));
+      return new Response(empty);
+    },
+  });
+  let checked = false;
+  assert.deepEqual(
+    await plugin.test(twoPaths, {
+      ...f.host,
+      async fetch(input, init) {
+        if (!checked && new URL(input).hostname !== "indexer.example") {
+          checked = true;
+          await new Promise((resolve) => setTimeout(resolve, 6000));
+        }
+        return f.host.fetch(input, init);
+      },
+    }),
+    {
+      success: true,
+      indexerName: `${verified}; a matching cached release was found`,
+    },
+  );
+  assert(checked);
+});
+
+// Feed 2 answers, with nothing, at thirteen seconds: after the twelve at which a search stops
+// waiting for feeds once one has a match, and inside the sixteen a feed has to answer.
+test("Test connection waits for a slow feed although another feed holds a match", async () => {
+  const start = performance.now();
+  assert.deepEqual(
+    await plugin.test(
+      twoPaths,
+      twoFeeds({
+        "/1/api": () => new Response(pride),
+        "/2/api": async () => {
+          await new Promise((resolve) => setTimeout(resolve, 13000));
+          return new Response(empty);
+        },
+      }).host,
+    ),
+    {
+      success: true,
+      indexerName: `${verified}; a matching cached release was found`,
+    },
+  );
+  assert(performance.now() - start < 14000);
+});
+
+// Feed 1 fails at once and feed 2 never answers; the provider refuses the key a second later.
+test("Test connection reports a provider failure at once, in preference to a feed's", async () => {
+  const f = twoFeeds({
+    "/1/api": () => new Response("down", { status: 500 }),
+    "/2/api": () => new Promise<Response>(() => {}),
+  });
+  const start = performance.now();
+  const result = await plugin.test(twoPaths, {
+    ...f.host,
+    async fetch(input, init) {
+      if (new URL(input).hostname === "indexer.example")
+        return f.host.fetch(input, init);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return new Response("denied", { status: 401 });
+    },
+  });
+  assert.deepEqual(result, {
+    success: false,
+    error: "TorBox: access denied. Check the API key.",
+  });
+  assert(performance.now() - start < 2000);
 });

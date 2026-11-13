@@ -58,13 +58,9 @@ const fileLabel = (
 export const search = Effect.fnUntraced(function* (
   q: PluginReleaseQuery,
   cfg: PluginIndexerConfig,
-  /**
-   * When Test connection began. With it the search fails unless every feed answered without
-   * failing, and its limits count from then, not from where the search began.
-   */
-  testStarted?: number,
+  /** Fail unless every feed answered without failing. Only Test connection asks for this. */
+  everyFeed = false,
 ) {
-  const everyFeed = testStarted !== undefined;
   const {
     account,
     endpoints: configured,
@@ -75,7 +71,7 @@ export const search = Effect.fnUntraced(function* (
   const host = yield* Network;
   const title = host.buildSearchText({ ...q, author: null });
   const searchIndexer = searchFeeds(account.indexerKey, q);
-  const started = testStarted ?? (yield* Clock.currentTimeMillis);
+  const started = yield* Clock.currentTimeMillis;
   const endpoints = configured.length
     ? configured
     : yield* discover(baseUrl, account.indexerKey, [q.mediaKind]);
@@ -83,11 +79,22 @@ export const search = Effect.fnUntraced(function* (
   // Discovery, feed requests and metadata share one stage. It ends early enough to leave time for
   // cache access once a feed has matches, and waits longer only while there is nothing to check.
   const relevant = (t: { readonly title: string }) => matches(title, t.title);
-  const feeds = (yield* collect(endpoints, searchIndexer, {
-    softMs: Math.max(0, 12000 - elapsed),
-    hardMs: Math.max(0, 16000 - elapsed),
-    matches: relevant,
-  })).map((feed, index) => ({
+  // Test connection vouches for every feed, so there a match ends collection early only once
+  // every feed has answered: a feed keeps its whole time to answer whatever another one holds.
+  const silent = new Set(everyFeed ? endpoints : []);
+  const feeds = (yield* collect(
+    endpoints,
+    (endpoint, known: Parameters<typeof searchIndexer>[1]) =>
+      searchIndexer(endpoint, (items) => {
+        silent.delete(endpoint);
+        return known(items);
+      }),
+    {
+      softMs: Math.max(0, 12000 - elapsed),
+      hardMs: Math.max(0, 16000 - elapsed),
+      matches: (t) => !silent.size && relevant(t),
+    },
+  )).map((feed, index) => ({
     ...feed,
     // A feed is named by its path only: never a query string or key.
     path: new URL(endpoints[index]).pathname,
@@ -326,13 +333,13 @@ export const resolveFile = Effect.fnUntraced(function* (
 });
 
 export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
-  const started = yield* Clock.currentTimeMillis;
   const { account, endpoints, baseUrl } = yield* prepare(cfg);
   const service = provider(account.debrid.provider);
-  yield* service.verify(account.debrid.key);
+  const verify = service.verify(account.debrid.key);
   // Some labels already end in "account"; the sentences below add their own noun.
   const name = service.label.replace(/ account$/, "");
   if (!endpoints.length) {
+    yield* verify;
     yield* discover(baseUrl, account.indexerKey, ["ebook", "audiobook"]);
     return {
       success: true,
@@ -348,11 +355,23 @@ export const test = Effect.fnUntraced(function* (cfg: PluginIndexerConfig) {
     language: "en",
     limit: 1,
   };
-  const releases = yield* search(
-    q,
-    { ...cfg, settings: { ...cfg.settings, prepareUncached: false } },
-    started,
+  // The feeds are asked while the provider is checked, so each has a search's full time to answer.
+  // A provider failure ends the test at once and stops the search; a feed problem waits for the
+  // provider check, whose failure is the one to report.
+  const [, searched] = yield* Effect.all(
+    [
+      verify,
+      Effect.result(
+        search(
+          q,
+          { ...cfg, settings: { ...cfg.settings, prepareUncached: false } },
+          true,
+        ),
+      ),
+    ],
+    { concurrency: "unbounded" },
   );
+  const releases = yield* Effect.fromResult(searched);
   return {
     success: true,
     indexerName: `BookOrbit Debrid: indexer search and ${name} access verified${releases.length ? "; a matching cached release was found" : ""}`,
