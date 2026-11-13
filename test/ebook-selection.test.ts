@@ -112,12 +112,27 @@ const rows: Row[] = [
     title: "Legend",
     files: ["Marie Lu/Legend.epub", ["David Gemmell/Legend.epub", 2000]],
   },
-  // A sample gives way to a full file.
+  // A sample gives way only to a file named exactly for the title.
   {
-    name: "a preview beside the full book",
+    name: "a sample beside the title's file",
+    title: "Dune",
+    files: ["Dune.epub", ["Dune - Sample.epub", 9000]],
+    offers: ["Dune.epub"],
+  },
+  {
+    name: "a sample beside another book",
+    title: "Dune",
+    files: ["Dune - Sample.epub", "Children of Dune.epub"],
+  },
+  {
+    name: "a preview beside another book",
+    title: "Dune",
+    files: ["Dune (preview).epub", "Dune Messiah.epub"],
+  },
+  {
+    name: "a preview beside an author-named file",
     title: "Circe",
     files: ["Madeline Miller - Circe.epub", ["Circe (preview).epub", 9000]],
-    offers: ["Madeline Miller - Circe.epub"],
   },
   { name: "a lone sample", title: "Dune", files: ["Dune (sample).epub"] },
   {

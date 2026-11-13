@@ -350,6 +350,33 @@ test("waiting Real-Debrid metadata selects exactly one complete file with no sel
   }
 });
 
+test("waiting Real-Debrid metadata does not select another book beside a sample", async () => {
+  for (const names of [
+    ["Dune - Sample.epub", "Children of Dune.epub"],
+    ["Dune (preview).epub", "Dune Messiah.epub"],
+  ]) {
+    const f = fixture({
+      details: () =>
+        torrent({
+          status: "waiting_files_selection",
+          progress: 0,
+          files: names.map((name, i) => ({
+            id: i + 1,
+            path: `/${name}`,
+            bytes: 100 + i,
+            selected: 0,
+          })),
+          links: [],
+        }),
+    });
+    await assert.rejects(
+      f.run(RD.prepare(hash, key, { title: "Dune", mediaKind: "ebook" })),
+      /Select one complete ebook or single-file audiobook in your Real-Debrid account/,
+    );
+    assert.deepEqual(mutations(f.calls), []);
+  }
+});
+
 test("Real-Debrid refuses ambiguous formats, multipart audio, chapters and unsupported downloaded jobs", async () => {
   for (const [details, q] of [
     [

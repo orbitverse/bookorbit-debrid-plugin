@@ -25,21 +25,17 @@ export function matches(title: string, value: string): boolean {
   );
 }
 
-const teaser = (s: string) => / (?:sample|preview) /.test(` ${normalize(s)} `);
-// Of one format's files whose path matches the title, the ones to offer. A
-// sample gives way to a full file, and files named exactly for the title,
-// nothing more and nothing less, are the book. Otherwise every file stays:
-// nothing is dropped on a guess.
+// Of one format's files whose path matches the title, the ones to offer: files
+// named exactly for the title, nothing more and nothing less, are the book.
+// Otherwise every file stays: nothing is dropped on a guess, not even a sample.
 function requested(files: readonly File[], title: string): readonly File[] {
   const spell = (s: string) =>
     ["", " "].map((a) => words(s.replace(/&/g, " and "), a).join(" "));
   const stem = (f: File) => f.name.replace(/^.*[\\/]|\.[^.]+$/g, "");
-  const full = teaser(title) ? [] : files.filter((f) => !teaser(stem(f)));
-  const books = full.length ? full : files;
-  const exact = books.filter((f) =>
+  const exact = files.filter((f) =>
     spell(stem(f)).some((name) => spell(title).includes(name)),
   );
-  return exact.length ? exact : books;
+  return exact.length ? exact : files;
 }
 const selectEbooks = (files: readonly File[], title: string) => {
   const found = files.filter(
