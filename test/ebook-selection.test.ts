@@ -293,6 +293,25 @@ const rows: Row[] = [
     mediaKind: "audiobook",
   },
   {
+    name: "a single m4b whose numbered title drops its apostrophe",
+    title: "Ender's Game 2",
+    files: ["Enders Game 2.m4b"],
+    mediaKind: "audiobook",
+  },
+  {
+    name: "a single m4b whose numbered title gains an apostrophe",
+    title: "Oceans 11",
+    files: ["Ocean's 11.m4b"],
+    mediaKind: "audiobook",
+  },
+  {
+    name: "a single m4b chapter of an apostrophe title",
+    title: "Ender's Game",
+    files: ["Enders Game 2.m4b"],
+    offers: [],
+    mediaKind: "audiobook",
+  },
+  {
     name: "two m4b editions",
     title: "Dune",
     files: ["Dune.m4b", "Dune (2007).m4b"],

@@ -69,13 +69,14 @@ export function selectFiles(
   if (!tracks.length) return [];
   if (tracks.length === 1) {
     const name = tracks[0].name.split(/[\\/]/).pop()!;
-    const remainder = normalize(name.replace(/\.[^.]+$/, ""))
-      .replace(normalize(q.title), "")
-      .trim();
-    const chapter =
+    // What the name adds to the title, in either spelling of an apostrophe.
+    const chapter = ["", " "].every((a) =>
       /(?:^|\s)(?:(?:chapter|track|part|disc|cd)\s*)?\d{1,3}(?:\s|$)/i.test(
-        remainder,
-      );
+        words(name.replace(/\.[^.]+$/, ""), a)
+          .join(" ")
+          .replace(words(q.title, a).join(" "), ""),
+      ),
+    );
     return matches(q.title, name) && !chapter
       ? [{ files: tracks, format: extension(tracks[0].name) }]
       : [];
